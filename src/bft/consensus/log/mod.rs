@@ -39,7 +39,7 @@ pub mod persistent;
 ///
 /// Every `PERIOD` messages, the message log is cleared,
 /// and a new log checkpoint is initiated.
-pub const PERIOD: u32 = 120_000_000;
+pub const PERIOD: u32 = 1000;
 
 /// Information reported after a logging operation.
 pub enum Info {
@@ -952,7 +952,8 @@ impl<S, T> Log<S, T>
     /// `Info::BeginCheckpoint`, and the requested application state is received
     /// on the core server task's master channel.
     pub fn finalize_checkpoint(&self, final_seq: SeqNo, appstate: State<S>) -> Result<()> {
-        match *self.checkpoint.borrow() {
+        let mut checkpoint = self.checkpoint.borrow_mut();
+        match *checkpoint {
             CheckpointState::None => {
                 Err("No checkpoint has been initiated yet").wrapped(ErrorKind::ConsensusLog)
             }
@@ -961,13 +962,12 @@ impl<S, T> Log<S, T>
             }
             CheckpointState::Partial { ref seq }
             | CheckpointState::PartialWithEarlier { ref seq, .. } => {
-                self.checkpoint
-                    .replace(CheckpointState::Complete(Arc::new(ReadOnly::new(
+                *checkpoint =CheckpointState::Complete(Arc::new(ReadOnly::new(
                         Checkpoint {
                             seq: final_seq,
                             appstate,
                         },
-                    ))));
+                    )));
 
                 let mut decided_request_count: usize = 0;
 
