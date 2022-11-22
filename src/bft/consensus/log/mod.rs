@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use intmap::IntMap;
-use log::{debug, error};
+use log::{debug, error, info};
 use parking_lot::Mutex;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
@@ -962,6 +962,7 @@ impl<S, T> Log<S, T>
             }
             CheckpointState::Partial { ref seq }
             | CheckpointState::PartialWithEarlier { ref seq, .. } => {
+                info!("Finalizing checkpoint {:?}", final_seq);
                 *checkpoint =CheckpointState::Complete(Arc::new(ReadOnly::new(
                         Checkpoint {
                             seq: final_seq,
