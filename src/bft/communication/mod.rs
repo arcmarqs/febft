@@ -422,8 +422,6 @@ where
 
                 let my_id = self.id();
 
-                let sync_acceptor = sync_acceptor.clone();
-
                 std::thread::Builder::new()
                     .name(format!("{:?} connection acceptor", self.id()))
                     .spawn(move || {
@@ -500,7 +498,6 @@ where
         });
 
         debug!("Initializing node peer handling.");
-
         //Setup all the peer message reception handling.
         let peers = NodePeers::new(
             cfg.id,
@@ -626,7 +623,6 @@ where
                 }
                 NodeConnector::Sync(sync_connector) => {
                     let node = node.clone();
-
                     node.tx_side_connect_sync(n as u32, sync_connector);
                 }
             }
@@ -1420,8 +1416,6 @@ where
 
     /// Registers the newly created transmission socket to the peer
     fn handle_connected_tx(self: &Arc<Self>, peer_id: NodeId, sock: SecureSocketSend) {
-        debug!("{:?} // Connected TX to peer {:?}", self.id, peer_id);
-
         let conn_handle = match sock {
             SecureSocketSend::Async(socket) => {
                 peer_sending_threads::initialize_async_sending_task_for(
@@ -1517,7 +1511,6 @@ where
             addr.replica_addr.as_ref().unwrap().clone()
         };
 
-        //println!("Attempting to connect to peer {:?} with address {:?} from node {:?}", peer_id, addr, my_id);
 
         debug!("{:?} // Starting connection to node {:?}", my_id, peer_id);
 
@@ -1536,13 +1529,11 @@ where
 
     fn register_currently_connecting_to_node(&self, peer_id: NodeId) -> bool {
         let mut guard = self.currently_connecting.lock().unwrap();
-
         guard.insert(peer_id)
     }
 
     fn unregister_currently_connecting_to_node(&self, peer_id: NodeId) -> bool {
         let mut guard = self.currently_connecting.lock().unwrap();
-
         guard.remove(&peer_id)
     }
 
@@ -1600,7 +1591,6 @@ where
                             "{:?} // Failed to find IP address for peer {:?}",
                             self.id, peer_id
                         );
-
                         return;
                     }
                 }
@@ -1653,7 +1643,6 @@ where
                 "Attempting to connect to node {:?} with addr {:?} for the {} time",
                 peer_id, addr, _try
             );
-
             match socket::connect_sync(addr) {
                 Ok(mut sock) => {
                     // create header
@@ -1685,7 +1674,6 @@ where
                             Ok(server_name) => server_name,
                             Err(err) => {
                                 error!("Failed to parse DNS name {:?}", err);
-
                                 break;
                             }
                         };
@@ -1694,7 +1682,6 @@ where
                             SecureSocketSendSync::new_tls(session, sock)
                         } else {
                             error!("Failed to establish tls connection.");
-
                             break;
                         }
                     };
@@ -1705,6 +1692,8 @@ where
                     self.handle_connected_tx(peer_id, final_sock);
 
                     self.unregister_currently_connecting_to_node(peer_id);
+
+                    self.node_handling.init_peer_conn(peer_id.clone());
 
                     if let Some(callback) = callback {
                         callback(true);
@@ -1807,6 +1796,8 @@ where
 
                 self.unregister_currently_connecting_to_node(peer_id);
 
+                self.node_handling.init_peer_conn(peer_id.clone());
+
                 if let Some(callback) = callback {
                     callback(true);
                 }
@@ -1902,7 +1893,6 @@ where
         mut sock: SyncSocket,
     ) {
         let mut buf_header = [0; Header::LENGTH];
-
         // this loop is just a trick;
         // the `break` instructions act as a `goto` statement
         loop {
@@ -1950,7 +1940,7 @@ where
 
             let cpy_peer_id = peer_id.clone();
 
-            debug!(
+           debug!(
                 "{:?} // Received new connection from id {:?}",
                 my_id, peer_id
             );

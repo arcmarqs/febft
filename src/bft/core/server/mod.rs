@@ -196,7 +196,6 @@ where
         debug!("Bootstrapping replica, starting with networking");
 
         let (node, rogue) = Node::bootstrap(node_config).await?;
-
         // connect to peer nodes
         let observer_handle = observer::start_observers(node.send_node());
 
@@ -469,6 +468,7 @@ where
 
     fn update_retrieving_state(&mut self) -> Result<()> {
         debug!("{:?} // Retrieving state...", self.id());
+        println!("State: Retrieving state...");
         let message = self.node.receive_from_replicas().unwrap();
 
         match message {
@@ -582,6 +582,7 @@ where
 
     fn update_sync_phase(&mut self) -> Result<bool> {
         debug!("{:?} // Updating Sync phase", self.id());
+        println!("State of replica: Sync");
 
         // retrieve a view change message to be processed
         let message = match self.synchronizer.poll() {
@@ -693,6 +694,7 @@ where
     }
 
     fn update_normal_phase(&mut self) -> Result<()> {
+        println!("State of replica: Normal phase");
         // check if we have STOP messages to be processed,
         // and update our phase when we start installing
         // the new view
