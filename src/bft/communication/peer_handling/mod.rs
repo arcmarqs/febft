@@ -106,7 +106,7 @@ impl<T> NodePeers<T> where T: Send {
 
     ///Initialize a new peer connection
     pub fn init_peer_conn(&self, peer: NodeId) -> Arc<ConnectedPeer<T>> {
-        //debug!("Initializing peer connection for peer {:?} on peer {:?}", peer, self.own_id);
+                //debug!("Initializing peer connection for peer {:?} on peer {:?}", peer, self.own_id);
 
         return if peer >= self.first_cli {
             self.client_handling.as_ref().expect("Tried to init client request from client itself?")

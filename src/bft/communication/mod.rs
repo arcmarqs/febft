@@ -1643,6 +1643,7 @@ where
                 "Attempting to connect to node {:?} with addr {:?} for the {} time",
                 peer_id, addr, _try
             );
+
             match socket::connect_sync(addr) {
                 Ok(mut sock) => {
                     // create header
