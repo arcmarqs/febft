@@ -967,8 +967,8 @@ impl<S, T> Log<S, T>
                         Checkpoint {
                             seq: final_seq,
                             appstate,
-                        },
-                    )));
+                        }
+                    ))));
 
                 let mut decided_request_count: usize = 0;
 
