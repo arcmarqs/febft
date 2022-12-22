@@ -84,7 +84,7 @@ impl<S: Service + 'static, T: PersistentLogModeTrait> Follower<S, T> {
     pub async fn new(cfg: FollowerConfig<S, T>) -> Result<Self> {
         let FollowerConfig {
             service,
-            log_mode,
+            log_mode: _,
             global_batch_size,
             batch_timeout,
             node: node_config,
@@ -96,7 +96,7 @@ impl<S: Service + 'static, T: PersistentLogModeTrait> Follower<S, T> {
 
         let db_path = node_config.db_path.clone();
 
-        let (node, rogue) = Node::bootstrap(node_config).await?;
+        let (node, _rogue) = Node::bootstrap(node_config).await?;
 
         let (executor, handle) = Executor::<S, FollowerReplier>::init_handle();
 
@@ -108,9 +108,9 @@ impl<S: Service + 'static, T: PersistentLogModeTrait> Follower<S, T> {
             db_path,
         );
 
-        let mut seq;
+        let seq;
 
-        let mut view;
+        let view;
 
         //Read the state from the persistent log
         let state = if let Some(read_state) = log.read_current_state(n, f)? {
@@ -222,7 +222,7 @@ impl<S: Service + 'static, T: PersistentLogModeTrait> Follower<S, T> {
         // `TboQueue`, in the consensus module.
         let polled_message = self.consensus.poll(&self.log);
 
-        let leader = self.synchronizer.view().leader() == self.id();
+        let _leader = self.synchronizer.view().leader() == self.id();
 
         let message = match polled_message {
             ConsensusPollStatus::Recv => self.node.receive_from_replicas()?,
@@ -303,6 +303,7 @@ impl<S: Service + 'static, T: PersistentLogModeTrait> Follower<S, T> {
                     // FIXME: handle rogue reply messages
                     SystemMessage::Reply(_) | SystemMessage::UnOrderedReply(_) => warn!("Rogue reply message detected"),
                     SystemMessage::ObserverMessage(_) => warn!("Rogue observer message detected"),
+                    SystemMessage::Ping(_) => {}
                 }
             }
             Message::Timeout(timeout_kind) => {
@@ -418,6 +419,7 @@ impl<S: Service + 'static, T: PersistentLogModeTrait> Follower<S, T> {
                     SystemMessage::UnOrderedRequest(_) => {
                         warn!("Received request while synchronizing, ignoring.")
                     }
+                    SystemMessage::Ping(_) => {}
                 }
             }
             //////// XXX XXX XXX XXX
@@ -539,6 +541,9 @@ impl<S: Service + 'static, T: PersistentLogModeTrait> Follower<S, T> {
                     }
                     SystemMessage::UnOrderedReply(_) => {
                         warn!("How can I receive a reply here?")
+                    }
+                    SystemMessage::Ping(_) => {
+
                     }
                 }
             }

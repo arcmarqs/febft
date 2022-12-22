@@ -179,8 +179,8 @@ where
             batch_timeout,
             node: node_config,
             service,
-            view,
-            log_mode,
+            view: _,
+            log_mode: _,
         } = cfg;
 
         let per_pool_batch_timeout = node_config.batch_timeout_micros;
@@ -350,6 +350,7 @@ where
                         SystemMessage::FwdConsensus(_) => {
                             warn!("Rogue fwd consensus message observed.")
                         }
+                        SystemMessage::Ping(_) => {}
                     }
                 }
                 // ignore other messages for now
@@ -566,6 +567,7 @@ where
                     SystemMessage::UnOrderedRequest(_) => {
                         warn!("Rogue unordered request message detected")
                     }
+                    SystemMessage::Ping(_) => {}
                 }
             }
             Message::Timeout(timeout_kind) => {
@@ -674,6 +676,7 @@ where
                     SystemMessage::Reply(_) | SystemMessage::UnOrderedReply(_) => warn!("Rogue reply message detected"),
                     SystemMessage::ObserverMessage(_) => warn!("Rogue observer message detected"),
                     SystemMessage::UnOrderedRequest(_) => todo!(),
+                    SystemMessage::Ping(_) => {}
                 }
             }
             //////// XXX XXX XXX XXX
@@ -713,7 +716,7 @@ where
         // `TboQueue`, in the consensus module.
         let polled_message = self.consensus.poll(&self.log);
 
-        let leader = self.synchronizer.view().leader() == self.id();
+        let _leader = self.synchronizer.view().leader() == self.id();
 
         let message = match polled_message {
             ConsensusPollStatus::Recv => self.node.receive_from_replicas()?,
@@ -783,13 +786,14 @@ where
                     SystemMessage::Consensus(message) => {
                         self.adv_consensus(header, message)?;
                     }
-                    SystemMessage::FwdConsensus(message) => {
+                    SystemMessage::FwdConsensus(_message) => {
                         warn!("Replicas cannot process forwarded consensus messages! They must receive the preprepare messages straight from leaders!");
                     }
                     // FIXME: handle rogue reply messages
                     SystemMessage::Reply(_) | SystemMessage::UnOrderedReply(_) => warn!("Rogue reply message detected"),
                     SystemMessage::ObserverMessage(_) => warn!("Rogue observer message detected"),
                     SystemMessage::UnOrderedRequest(_) => todo!(),
+                    SystemMessage::Ping(_) => {},
                 }
             }
             Message::Timeout(timeout_kind) => {
