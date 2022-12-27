@@ -732,6 +732,7 @@ impl Debug for ObserveEventKind {
 ///Contains a boolean representing if this is a request.
 ///If it is a ping request, should be set to true,
 ///ping responses should be false
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone)]
 pub struct PingMessage {
     request: bool,

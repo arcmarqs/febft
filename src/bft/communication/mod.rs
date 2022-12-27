@@ -1662,21 +1662,26 @@ impl<D> Node<D>
 
                 if self.is_connected_to_tx(peer_id) {
                     match self.ping_handler.ping_peer(&self, peer_id) {
-                        Ok(mut result) => {
-                            let result = result.recv().unwrap();
+                        Ok(result) => {
+                            let result = result.recv();
 
                             match result {
-                                Ok(_) => {
+                                Ok(Ok(_)) => {
                                     //Our connection to this peer is fine, we shouldn't try to reconnect
                                     debug!("Attempted to reconnect to peer {:?} but the current connection appears to be fine.", peer_id);
 
                                     self.unregister_currently_connecting_to_node(peer_id);
                                     return;
                                 }
-                                Err(_error) => {
+                                Ok(Err(_error)) => {
                                     debug!("Peer {:?} is not reachable. Attempting to reconnect. ", peer_id);
                                 }
+
+                                _ => {
+                                    debug!("Failed to receive message from Peer {:?}", peer_id);
+                                }
                             }
+                           
                         }
                         Err(error) => {
                             error!("Failed to ping peer {:?} for {:?}", peer_id, error);
@@ -1828,7 +1833,7 @@ impl<D> Node<D>
 
                     self.unregister_currently_connecting_to_node(peer_id);
 
-                    self.node_handling.init_peer_conn(peer_id.clone());
+                   // self.node_handling.init_peer_conn(peer_id.clone());
 
                     if let Some(callback) = callback {
                         callback(true);
@@ -1930,8 +1935,6 @@ impl<D> Node<D>
                 self.handle_connected_tx(peer_id, final_sock);
 
                 self.unregister_currently_connecting_to_node(peer_id);
-
-                self.node_handling.init_peer_conn(peer_id.clone());
 
                 if let Some(callback) = callback {
                     callback(true);

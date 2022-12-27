@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use dashmap::DashMap;
 
-use log::{error, info};
+use log::{error, info, debug};
 
 use crate::bft::communication::{channel, NODE_CHAN_BOUND, NodeId};
 use crate::bft::communication::channel::{ChannelMultRx, ChannelMultTx, ChannelSyncTx, TryRecvError};
@@ -108,7 +108,7 @@ impl<T> NodePeers<T> where T: Send {
 
     ///Initialize a new peer connection
     pub fn init_peer_conn(&self, peer: NodeId) -> Arc<ConnectedPeer<T>> {
-                //debug!("Initializing peer connection for peer {:?} on peer {:?}", peer, self.own_id);
+        //debug!("Initializing peer connection for peer {:?} on peer {:?}", peer, self.own_id);
 
         return if peer >= self.first_cli {
             self.client_handling.as_ref().expect("Tried to init client request from client itself?")
