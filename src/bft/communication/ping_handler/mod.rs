@@ -67,7 +67,7 @@ impl PingHandler {
             });
         }
 
-        debug!("Pinging the node {:?}", peer_id);
+        debug!("{:?} // Pinging the node {:?}", node.id(), peer_id);
 
         node.send(SystemMessage::Ping(PingMessage::new(true)), peer_id, true);
 
@@ -85,7 +85,7 @@ impl PingHandler {
         };
 
         if ping.is_request() {
-            debug!("Received ping request from node {:?}, sending ping response", peer_id);
+            debug!("{:?} // Received ping request from node {:?}, sending ping response", node.id(), peer_id);
 
             node.send(SystemMessage::Ping(PingMessage::new(false)), peer_id, true);
         } else {
@@ -94,9 +94,9 @@ impl PingHandler {
 
                 information.tx.send(ping_response).unwrap();
 
-                debug!("Received ping response from peer {:?}", peer_id);
+                debug!("{:?} // Received ping response from peer {:?}",node.id(), peer_id);
             } else {
-                error!("Received ping that was not requested? {:?}", peer_id);
+                error!("{:?} // Received ping that was not requested? {:?}",node.id(), peer_id);
             }
         }
     }

@@ -681,7 +681,7 @@ where
                             let operation_id = msg_info.sequence_number();
 
                             debug!("{:?} // Received reply to {:?} session op id {:?} from {:?}", node.id(), session_id, operation_id, header.from());
-
+                            
                             //Check if we have already executed the operation
                             let last_operation_id = last_operation_ids
                                 .get(session_id.into())
@@ -729,7 +729,7 @@ where
                                 1
                             };
 
-                            debug!("Current response count is {}", count);
+                            debug!("{:?} // Current response count is {}",node.id(), count);
 
                             // wait for the amount of votes that we require identical replies
                             // In a BFT system, this is by default f+1

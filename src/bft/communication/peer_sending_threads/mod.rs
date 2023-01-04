@@ -118,7 +118,7 @@ fn sync_sending_thread<D>(
         let to_send = match recv_result {
             Ok(to_send) => to_send,
             Err(_recv_err) => {
-                error!("Sending channel for client {:?} has disconnected!", peer_id);
+                error!("{:?} // Sending channel for client {:?} has disconnected!", node.id(),peer_id);
                 break;
             }
         };
@@ -195,7 +195,7 @@ async fn async_sending_task<D>(
         let to_send = match recv_result {
             Ok(to_send) => to_send,
             Err(_recv_err) => {
-                error!("Sending channel for client {:?} has disconnected!", peer_id);
+                error!("{:?} // Sending channel for client {:?} has disconnected!", node.id(), peer_id);
                 break;
             }
         };
