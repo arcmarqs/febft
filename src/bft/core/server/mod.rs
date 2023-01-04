@@ -697,7 +697,6 @@ where
     }
 
     fn update_normal_phase(&mut self) -> Result<()> {
-        println!("State of replica: Normal phase");
         // check if we have STOP messages to be processed,
         // and update our phase when we start installing
         // the new view
