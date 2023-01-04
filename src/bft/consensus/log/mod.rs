@@ -952,7 +952,7 @@ impl<S, T> Log<S, T>
     /// `Info::BeginCheckpoint`, and the requested application state is received
     /// on the core server task's master channel.
     pub fn finalize_checkpoint(&self, final_seq: SeqNo, appstate: State<S>) -> Result<()> {
-        let mut checkpoint = self.checkpoint.borrow_mut();
+       let mut checkpoint = self.checkpoint.borrow_mut();
         match *checkpoint {
             CheckpointState::None => {
                 Err("No checkpoint has been initiated yet").wrapped(ErrorKind::ConsensusLog)
@@ -962,13 +962,13 @@ impl<S, T> Log<S, T>
             }
             CheckpointState::Partial { seq: _ }
             | CheckpointState::PartialWithEarlier { seq: _, .. } => {
-                self.checkpoint
-                    .replace(CheckpointState::Complete(Arc::new(ReadOnly::new(
+                info!("Finalizing checkpoint {:?}", final_seq);
+                *checkpoint = CheckpointState::Complete(Arc::new(ReadOnly::new(
                         Checkpoint {
                             seq: final_seq,
                             appstate,
-                        }
-                    ))));
+                        },
+                    )));
 
                 let mut decided_request_count: usize = 0;
 
