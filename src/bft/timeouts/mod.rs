@@ -100,7 +100,7 @@ impl Timeouts {
         })).expect("Failed to contact timeout thread");
     }
 
-    pub fn received_requests(self, recvd_rqs: Vec<TimeoutKind>) {
+    pub fn received_requests(&self, recvd_rqs: Vec<TimeoutKind>) {
         self.handle.send(TimeoutMessage::MessagesReceived(recvd_rqs))
             .expect("Failed to contact timeout thread");}
 }

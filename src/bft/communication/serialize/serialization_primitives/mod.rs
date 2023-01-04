@@ -81,7 +81,7 @@ where
         SystemMessage::Consensus(m) => {
             let mut consensus = sys_msg.init_consensus();
 
-            serialize_consensus_message(&mut consensus, m) ?;
+            serialize_consensus_message::<S>(&mut consensus, m) ?;
         }
         SystemMessage::ObserverMessage(observer_message) => {
             let capnp_observer = sys_msg.init_observer_message();
@@ -484,8 +484,8 @@ where
                 {
                     let mut request = forwarded.reborrow().init_request();
 
-                    request.set_session_id(req.session_id().into());
-                    request.set_operation_id(req.sequence_number().into());
+                    request.set_session_id(stored.message().session_id().into());
+                    request.set_operation_id(stored.message().sequence_number().into());
 
                     let stored_req = stored.message();
 
