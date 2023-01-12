@@ -12,6 +12,7 @@ struct System {
         unorderedRequest @4 :UnorderedRequest;
         unorderedReply   @5 :UnorderedReply;
         ping             @6 :Ping;
+        cst              @7 :Cst;
     }
 }
 
@@ -98,4 +99,43 @@ struct ViewInfo {
 
 struct Ping {
     request    @0 :Bool;
+}
+
+struct Cst {
+    seqNo   @0 :UInt32;
+    kind: union {
+        requestLatestConsensusSeq   @1 :Void;
+        requestState                @2 :Void;
+        replyLatestConsensusSeq     @3 :UInt32;
+        replyState                  @4 :RecoveryState;         
+    }
+}
+
+struct RecoveryState {
+    view        @0 :ViewInfo;
+    quorum      @1 :List(UInt32);
+    checkpoint  @2 :Checkpoint;
+    requests    @3 :List(Data);
+    declog      @4 :Declog;
+}
+
+struct Checkpoint {
+    seq      @0 :UInt32;
+    appstate @1 :Data;
+}
+
+struct Declog {
+    lastExec: union {
+        none    @0 :Void;
+        seqNo   @1 :UInt32;
+    }
+    prePrepares     @2 :List(StoredMessage);
+    prepares        @3 :List(StoredMessage);
+    commits         @4 :List(StoredMessage);
+}
+
+struct StoredMessage {
+    header  @0 :Data;
+    message @1 :Consensus;
+
 }

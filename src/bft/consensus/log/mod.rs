@@ -39,7 +39,7 @@ pub mod persistent;
 ///
 /// Every `PERIOD` messages, the message log is cleared,
 /// and a new log checkpoint is initiated.
-pub const PERIOD: u32 = 1000;
+pub const PERIOD: u32 = 100;
 
 /// Information reported after a logging operation.
 pub enum Info {
@@ -100,6 +100,13 @@ impl<S> Checkpoint<S> {
     /// Returns the inner values within this local checkpoint.
     pub fn into_inner(self) -> (SeqNo, S) {
         (self.seq, self.appstate)
+    }
+
+    pub fn new(seq: SeqNo, appstate: S) -> Self {
+        Self {
+            seq,
+            appstate,
+        }
     }
 }
 
@@ -924,7 +931,7 @@ impl<S, T> Log<S, T>
 
     fn begin_checkpoint(&self, seq: SeqNo) -> Result<Info> {
         let earlier = self.checkpoint.replace(CheckpointState::None);
-
+        info!(" {:?} // Initializing checkpoint {:?}", self.node_id, seq);
         self.checkpoint.replace(match earlier {
             CheckpointState::None => CheckpointState::Partial { seq },
             CheckpointState::Complete(earlier) => {
@@ -962,7 +969,7 @@ impl<S, T> Log<S, T>
             }
             CheckpointState::Partial { seq: _ }
             | CheckpointState::PartialWithEarlier { seq: _, .. } => {
-                info!("Finalizing checkpoint {:?}", final_seq);
+                info!(" {:?} // Finalizing checkpoint {:?}", self.node_id, final_seq);
                 *checkpoint = CheckpointState::Complete(Arc::new(ReadOnly::new(
                         Checkpoint {
                             seq: final_seq,

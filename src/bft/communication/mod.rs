@@ -1966,7 +1966,6 @@ impl<D> Node<D>
         acceptor: Arc<ServerConfig>,
     ) {
         debug!("{:?} // Awaiting for new connections", my_id);
-
         loop {
             if let Ok(sock) = listener.accept() {
                 let replica_acceptor = acceptor.clone();

@@ -1,8 +1,12 @@
 use std::io::Read;
 use std::io::Write;
 
-use crate::bft::communication::message::{ConsensusMessage, ConsensusMessageKind, Header, ObserveEventKind, ObserverMessage, PingMessage, ReplyMessage, RequestMessage, StoredMessage, SystemMessage};
+use rustls::internal::msgs::ccs::ChangeCipherSpecPayload;
 
+use crate::bft::communication::NodeId;
+use crate::bft::communication::message::{CstMessage, CstMessageKind, ConsensusMessage, ConsensusMessageKind, Header, ObserveEventKind, ObserverMessage, PingMessage, ReplyMessage, RequestMessage, StoredMessage, SystemMessage};
+
+use crate::bft::consensus::log::Checkpoint;
 use crate::bft::core::server::ViewInfo;
 use crate::bft::crypto::hash::Digest;
 use crate::bft::error::*;
@@ -150,6 +154,120 @@ where
             let mut builder = sys_msg.init_ping();
 
             builder.set_request(message.is_request());
+        }
+
+        SystemMessage::Cst(message) => {
+            let mut cst = sys_msg.init_cst();
+
+            cst.set_seq_no(message.sequence_number().into());
+            
+            let mut cst_message = cst.init_kind();
+
+            match message.kind() {
+                CstMessageKind::RequestLatestConsensusSeq => cst_message.set_request_latest_consensus_seq(()),
+                CstMessageKind::ReplyLatestConsensusSeq(seq) => cst_message.set_reply_latest_consensus_seq((*seq).into()),
+                CstMessageKind::RequestState => cst_message.set_request_state(()),
+                CstMessageKind::ReplyState(req_state) => {
+                    let mut state = cst_message.init_reply_state();
+
+                    {
+                        let mut view = state.reborrow().init_view();
+                        view.set_f(req_state.view().params().f() as u32);
+                        view.set_n(req_state.view().params().n() as u32);
+                        view.set_view_num(req_state.view().sequence_number().into());
+                    }
+
+                    {
+                        let mut quorum = state.reborrow().init_quorum(req_state.view().quorum_members().len() as u32);
+
+                        for (index,id) in req_state.view().quorum_members().iter().enumerate() {
+                            quorum.set(index as u32, id.id());
+                        }
+                    }
+
+                    {
+                        let mut checkpoint = state.reborrow().init_checkpoint();
+                        checkpoint.set_seq(req_state.checkpoint().sequence_number().into());
+
+                        let mut appstate = Buf::with_capacity(DEFAULT_SERIALIZE_BUFFER_SIZE);
+
+                        S::serialize_state(&mut appstate, req_state.checkpoint().state())?;
+
+                        checkpoint.set_appstate(&appstate);
+                    }
+
+                    {
+                        let mut requests = state.reborrow().init_requests(req_state.requests().len() as u32);
+                        let mut rq = Buf::with_capacity(DEFAULT_SERIALIZE_BUFFER_SIZE);
+
+                        for (index, req) in req_state.requests().iter().enumerate() {
+
+                            S::serialize_request(&mut rq, req)?;
+        
+                            requests.set(index as u32, &rq);
+                        }
+                    }
+
+                    {
+                        let mut declog = state.reborrow().init_declog();
+                        let mut header = [0; Header::LENGTH];
+
+                        {
+                            let preprepares = req_state.decision_log().pre_prepares();
+                            let mut preprep_builder = declog.reborrow().init_pre_prepares(preprepares.len() as u32);
+
+                            for (i,preprepare )in preprepares.iter().enumerate() {
+                                let mut stored = preprep_builder.reborrow().get(i as u32);
+
+                                preprepare.header().serialize_into(&mut header[..]).unwrap();
+                                stored.set_header(&header);
+                                
+                                let mut consensus_message = stored.init_message();
+                                serialize_consensus_message::<S>(&mut consensus_message, preprepare.message()) ?;
+                            }
+                        }
+
+                        {
+                            let prepares = req_state.decision_log().prepares();
+                            let mut prep_builder = declog.reborrow().init_prepares(prepares.len() as u32);
+                            for (i,prepare )in prepares.iter().enumerate() {
+                                let mut stored = prep_builder.reborrow().get(i as u32);
+
+                                prepare.header().serialize_into(&mut header[..]).unwrap();
+                                stored.set_header(&header);
+                                
+                                let mut consensus_message = stored.init_message();
+                                serialize_consensus_message::<S>(&mut consensus_message, prepare.message()) ?;
+                            }
+                        }
+
+                        {
+                            let commits = req_state.decision_log().commits();
+                            let mut commit_builder = declog.reborrow().init_commits(commits.len() as u32);
+                            for (i, commit) in commits.iter().enumerate() {
+                                let mut stored = commit_builder.reborrow().get(i as u32);
+
+                                commit.header().serialize_into(&mut header[..]).unwrap();
+                                stored.set_header(&header);
+                                
+                                let mut consensus_message = stored.init_message();
+                                serialize_consensus_message::<S>(&mut consensus_message, commit.message()) ?;
+                            }
+
+                        }
+
+                        {
+                            let mut last_exec_builder = declog.reborrow().init_last_exec();
+                            if let Some(last_exec) = req_state.decision_log().last_execution() {
+                                last_exec_builder.set_seq_no(last_exec.into());
+                            } else {
+                                last_exec_builder.set_none(());
+                            }
+                        }  
+                    }  
+                },
+            }
+
         }
         _ => return Err("Unsupported system message").wrapped(ErrorKind::CommunicationSerialize),
     }
@@ -316,6 +434,60 @@ where
     deserialize_consensus_message::<S>(consensus_msg)
 }
 
+pub fn deserialize_cst<S>(message: messages_capnp::cst::Reader) -> Result<CstMessage<S::State,S::Request>> 
+where
+    S: SharedData + ?Sized,  
+{
+    let seq_no = message.get_seq_no();
+    
+    let cst_kind = message.get_kind().which()
+    .wrapped(ErrorKind::CommunicationSerialize)?;
+
+    match cst_kind {
+        messages_capnp::cst::kind::Which::RequestLatestConsensusSeq(_) => Ok(CstMessage::new(seq_no.into(), CstMessageKind::RequestLatestConsensusSeq)),
+        messages_capnp::cst::kind::Which::RequestState(_) =>  Ok(CstMessage::new(seq_no.into(), CstMessageKind::RequestState)),
+        messages_capnp::cst::kind::Which::ReplyLatestConsensusSeq(seqno) =>  Ok(CstMessage::new(seq_no.into(), CstMessageKind::ReplyLatestConsensusSeq(seqno.into()))),
+        messages_capnp::cst::kind::Which::ReplyState(rec_reader) =>{
+            let quorum: Vec<NodeId> = {
+                if let Ok(quo) = rec_reader.as_ref().unwrap().get_quorum() {
+                    quo.into_iter().map(| x | NodeId::from(x) )
+                } else {
+                    panic!("Couldn't find quorum");
+                }
+            }.collect();
+
+            let (seq,n,f) = {
+                if let Ok(view) = rec_reader.as_ref().unwrap().get_view() {
+                    (view.get_view_num(),view.get_n(),view.get_f())
+                } else {
+                    panic!("Couldn't find view number");
+                }
+            };
+
+            let checkpoint ={
+                if let Ok(check) = rec_reader.as_ref().unwrap().get_checkpoint() {
+                    let appstate = S::deserialize_state(check.get_appstate().unwrap())?;
+                    let seq_no = check.get_seq();
+
+                   Checkpoint::new(seq_no.into(), appstate)
+
+                } else {
+                    panic!("Couldn't find checkpoint");
+                }
+            };
+            
+            let requests = {
+                if let Ok(req) = rec_reader.as_ref().unwrap().get_requests() {
+
+                 todo!()
+                }
+            }
+
+
+            todo!()
+        },
+    }
+}
 /// Deserialize a wire message from a reader `R`.
 pub fn deserialize_message<R, S>(r: R) -> Result<SystemMessage<S::State, S::Request, S::Reply>>
 where
@@ -452,6 +624,12 @@ where
             Ok(SystemMessage::Ping(PingMessage::new(ping_message.get_request())))
         }
         messages_capnp::system::Which::Ping(Err(err)) => {
+            Err(format!("{:?}", err).as_str()).wrapped(ErrorKind::CommunicationSerialize)
+        }
+        messages_capnp::system::Which::Cst(Ok(cst_message)) => Ok(
+            SystemMessage::Cst(deserialize_cst::<S>(cst_message)?)
+        ),
+        messages_capnp::system::Which::Cst(Err(err)) => { 
             Err(format!("{:?}", err).as_str()).wrapped(ErrorKind::CommunicationSerialize)
         }
     }

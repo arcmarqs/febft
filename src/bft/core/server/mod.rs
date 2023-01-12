@@ -213,8 +213,6 @@ where
             db_path,
         );
 
-        let seq;
-
         let view;
 
         debug!("Reading state from memory");
@@ -227,8 +225,6 @@ where
                 read_state.checkpoint().sequence_number()
             };
 
-            seq = last_seq;
-
             view = read_state.view().clone();
 
             let executed_requests = read_state.requests.clone();
@@ -237,11 +233,11 @@ where
 
             log.install_state(last_seq, read_state);
 
+            debug!("{:?} // Installed state with last seq {:?} from memory",node.id(), last_seq);
             Some((state, executed_requests))
         } else {
 
-            seq = SeqNo::ZERO;
-
+            debug!("{:?} // No State in memory", node.id());
             view = ViewInfo::new(SeqNo::ZERO, n, f)?;
 
             None
@@ -703,6 +699,7 @@ where
         if self.synchronizer.can_process_stops() {
             let running = self.update_sync_phase()?;
             if running {
+                debug!("{:?} // STOP MESSAGE FOUND", self.id());
                 self.switch_phase(ReplicaPhase::SyncPhase);
 
                 return Ok(());
@@ -732,8 +729,6 @@ where
             }
         };
 
-        debug!("{:?} // Processing message {:?}", self.id(), message);
-
         match message {
             Message::System(header, message) => {
                 match message {
@@ -744,6 +739,7 @@ where
                         self.request_received(header, request);
                     }
                     SystemMessage::Cst(message) => {
+                        debug!("{:?} // CST Message received", self.id());
                         let status = self.cst.process_message(
                             CstProgress::Message(header, message),
                             &self.synchronizer,
