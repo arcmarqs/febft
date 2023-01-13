@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::io::Write;
+use std::sync::Arc;
 
 use rustls::internal::msgs::ccs::ChangeCipherSpecPayload;
 
@@ -7,9 +8,12 @@ use crate::bft::communication::NodeId;
 use crate::bft::communication::message::{CstMessage, CstMessageKind, ConsensusMessage, ConsensusMessageKind, Header, ObserveEventKind, ObserverMessage, PingMessage, ReplyMessage, RequestMessage, StoredMessage, SystemMessage};
 
 use crate::bft::consensus::log::Checkpoint;
+use crate::bft::consensus::log::DecisionLog;
 use crate::bft::core::server::ViewInfo;
 use crate::bft::crypto::hash::Digest;
+use crate::bft::cst::RecoveryState;
 use crate::bft::error::*;
+use crate::bft::globals::ReadOnly;
 use crate::bft::ordering::{Orderable, SeqNo};
 
 use super::{Buf, SharedData};
@@ -201,9 +205,8 @@ where
                         let mut rq = Buf::with_capacity(DEFAULT_SERIALIZE_BUFFER_SIZE);
 
                         for (index, req) in req_state.requests().iter().enumerate() {
-
+                        
                             S::serialize_request(&mut rq, req)?;
-        
                             requests.set(index as u32, &rq);
                         }
                     }
@@ -448,6 +451,9 @@ where
         messages_capnp::cst::kind::Which::RequestState(_) =>  Ok(CstMessage::new(seq_no.into(), CstMessageKind::RequestState)),
         messages_capnp::cst::kind::Which::ReplyLatestConsensusSeq(seqno) =>  Ok(CstMessage::new(seq_no.into(), CstMessageKind::ReplyLatestConsensusSeq(seqno.into()))),
         messages_capnp::cst::kind::Which::ReplyState(rec_reader) =>{
+
+            //TODO : Handle the errors instead of unwrapping without checking, theres also probably a better way to handle this deserialization
+
             let quorum: Vec<NodeId> = {
                 if let Ok(quo) = rec_reader.as_ref().unwrap().get_quorum() {
                     quo.into_iter().map(| x | NodeId::from(x) )
@@ -458,18 +464,20 @@ where
 
             let (seq,n,f) = {
                 if let Ok(view) = rec_reader.as_ref().unwrap().get_view() {
-                    (view.get_view_num(),view.get_n(),view.get_f())
+                    (SeqNo::from(view.get_view_num()),view.get_n() as usize ,view.get_f() as usize)
                 } else {
                     panic!("Couldn't find view number");
                 }
             };
+
+            let view: ViewInfo = ViewInfo::new_with_quorum(seq, n, f, quorum).wrapped(ErrorKind::CommunicationSerialize)?;
 
             let checkpoint ={
                 if let Ok(check) = rec_reader.as_ref().unwrap().get_checkpoint() {
                     let appstate = S::deserialize_state(check.get_appstate().unwrap())?;
                     let seq_no = check.get_seq();
 
-                   Checkpoint::new(seq_no.into(), appstate)
+                   Arc::new(ReadOnly::new(Checkpoint::new(seq_no.into(), appstate)))
 
                 } else {
                     panic!("Couldn't find checkpoint");
@@ -478,13 +486,83 @@ where
             
             let requests = {
                 if let Ok(req) = rec_reader.as_ref().unwrap().get_requests() {
+                    let data = req
+                    .into_iter()
+                    .map(|r|  S::deserialize_request(r.unwrap()).unwrap())
+                    .collect::<Vec<_>>();
 
-                 todo!()
+                    data
+                } else {
+                    panic!("Couldn't deserialize request");
                 }
-            }
+            };
 
+            let declog = {
+                 if let Ok(log) = rec_reader.as_ref().unwrap().get_declog() {
+                   
+                    let last_exec = match log.get_last_exec().which().wrapped(ErrorKind::CommunicationSerialize)? {
+                        messages_capnp::declog::last_exec::Which::None(()) => None,
+                        messages_capnp::declog::last_exec::Which::SeqNo(exec) => Some(SeqNo::from(exec)),
+                    };
 
-            todo!()
+                    let pre_prepares ={
+                        let mut v = Vec::new();
+                        let read = log.get_pre_prepares().wrapped(ErrorKind::CommunicationSerialize)?;
+                        for r in read.iter()  {
+                            let message = r.get_message().wrapped(ErrorKind::CommunicationSerialize)?;
+                            let m = deserialize_consensus_message::<S>(message)
+                            .wrapped(ErrorKind::CommunicationSerialize)?;
+
+                            let buf = r.get_header().wrapped(ErrorKind::CommunicationSerialize)?;
+                            let header = Header::deserialize_from(buf).wrapped(ErrorKind::CommunicationSerialize)?;
+                            v.push(Arc::new(ReadOnly::new(StoredMessage::new(header, m))))
+                        }
+                        v
+                    };
+
+                    let prepares ={
+                        let mut v = Vec::new();
+                        let read = log.get_prepares().wrapped(ErrorKind::CommunicationSerialize)?;
+                        for r in read.iter()  {
+                            let message = r.get_message().wrapped(ErrorKind::CommunicationSerialize)?;
+                            let m = deserialize_consensus_message::<S>(message)
+                            .wrapped(ErrorKind::CommunicationSerialize)?;
+
+                            let buf = r.get_header().wrapped(ErrorKind::CommunicationSerialize)?;
+                            let header = Header::deserialize_from(buf).wrapped(ErrorKind::CommunicationSerialize)?;
+                            v.push(Arc::new(ReadOnly::new(StoredMessage::new(header, m))))
+                        }
+                        v
+                    };
+
+                    let commits ={
+                        let mut v = Vec::new();
+                        let read = log.get_commits().wrapped(ErrorKind::CommunicationSerialize)?;
+                        for r in read.iter()  {
+                            let message = r.get_message().wrapped(ErrorKind::CommunicationSerialize)?;
+                            let m = deserialize_consensus_message::<S>(message)
+                            .wrapped(ErrorKind::CommunicationSerialize)?;
+
+                            let buf = r.get_header().wrapped(ErrorKind::CommunicationSerialize)?;
+                            let header = Header::deserialize_from(buf).wrapped(ErrorKind::CommunicationSerialize)?;
+                            v.push(Arc::new(ReadOnly::new(StoredMessage::new(header, m))))
+                        }
+                        v
+                    };
+
+                    DecisionLog::import_from_message(
+                        last_exec,
+                        pre_prepares,
+                        prepares,
+                        commits
+                    )
+                 } else {
+                    panic!("failed to convert message into log");
+                 }
+
+            };
+
+            Ok(CstMessage::new(seq_no.into(), CstMessageKind::ReplyState(RecoveryState::new(view,checkpoint,requests,declog))))
         },
     }
 }

@@ -85,6 +85,15 @@ impl ViewInfo {
         })
     }
 
+    pub fn new_with_quorum(seq: SeqNo, n: usize, f: usize, quorum: Vec<NodeId>) -> Result<Self> {
+        let params = SystemParams::new(n, f)?;
+        Ok(Self {
+            seq,
+            quorum,
+            params,
+        })
+    }
+
     /// Returns a copy of this node's `SystemParams`.
     pub fn params(&self) -> &SystemParams {
         &self.params
@@ -466,6 +475,8 @@ where
     fn update_retrieving_state(&mut self) -> Result<()> {
         debug!("{:?} // Retrieving state...", self.id());
         println!("State: Retrieving state...");
+
+        
         let message = self.node.receive_from_replicas().unwrap();
 
         match message {
@@ -499,6 +510,8 @@ where
                         match status {
                             CstStatus::Running => (),
                             CstStatus::State(state) => {
+                                println!("Received CST MESSAGE State");
+
                                 install_recovery_state(
                                     state,
                                     &self.synchronizer,
@@ -509,10 +522,11 @@ where
 
                                 let next_phase =
                                     self.phase_stack.take().unwrap_or(ReplicaPhase::NormalPhase);
-
                                 self.switch_phase(next_phase);
                             }
                             CstStatus::SeqNo(seq) => {
+                                println!("Received CST MESSAGE seqNO");
+
                                 if self.consensus.sequence_number() < seq {
                                     // this step will allow us to ignore any messages
                                     // for older consensus instances we may have had stored;
@@ -534,6 +548,8 @@ where
                                 }
                             }
                             CstStatus::RequestLatestCid => {
+                                println!("Received CST MESSAGE Request CID ");
+
                                 self.cst.request_latest_consensus_seq_no(
                                     &self.synchronizer,
                                     &self.timeouts,
@@ -542,6 +558,7 @@ where
                                 );
                             }
                             CstStatus::RequestState => {
+                                println!("Received CST MESSAGE Request State");
                                 self.cst.request_latest_state(
                                     &self.synchronizer,
                                     &self.timeouts,
@@ -712,6 +729,10 @@ where
         // `TboQueue`, in the consensus module.
         let polled_message = self.consensus.poll(&self.log);
 
+        if self.id() == NodeId(2) && self.consensus.sequence_number() > SeqNo::from(150) {
+
+            self.switch_phase(ReplicaPhase::RetrievingState)
+        }
         let _leader = self.synchronizer.view().leader() == self.id();
 
         let message = match polled_message {
