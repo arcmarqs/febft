@@ -2,7 +2,8 @@ use std::io::Read;
 use std::io::Write;
 use std::sync::Arc;
 
-use rustls::internal::msgs::ccs::ChangeCipherSpecPayload;
+use crate::bft::communication::message::{ConsensusMessage, ConsensusMessageKind, Header, ObserveEventKind, ObserverMessage, PingMessage, ReplyMessage, RequestMessage, StoredMessage, SystemMessage};
+use crate::bft::communication::serialize::Persister;
 
 use crate::bft::communication::NodeId;
 use crate::bft::communication::message::{CstMessage, CstMessageKind, ConsensusMessage, ConsensusMessageKind, Header, ObserveEventKind, ObserverMessage, PingMessage, ReplyMessage, RequestMessage, StoredMessage, SystemMessage};
@@ -740,10 +741,10 @@ where
                 {
                     let mut request = forwarded.reborrow().init_request();
 
-                    request.set_session_id(stored.message().session_id().into());
-                    request.set_operation_id(stored.message().sequence_number().into());
-
                     let stored_req = stored.message();
+
+                    request.set_session_id(stored_req.session_id().into());
+                    request.set_operation_id(stored_req.sequence_number().into());
 
                     let mut rq = Buf::with_capacity(DEFAULT_SERIALIZE_BUFFER_SIZE);
 
