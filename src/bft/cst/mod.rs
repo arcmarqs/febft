@@ -16,16 +16,17 @@ use serde::{Deserialize, Serialize};
 use crate::bft::collections::{self, HashMap};
 use crate::bft::communication::message::{CstMessage, CstMessageKind, Header, SystemMessage};
 use crate::bft::communication::{Node, NodeId};
-use crate::bft::consensus::log::{Checkpoint, DecisionLog, Log};
 use crate::bft::core::server::ViewInfo;
 use crate::bft::crypto::hash::Digest;
 use crate::bft::error::*;
 use crate::bft::executable::{ExecutorHandle, Reply, Request, Service, State};
+use crate::bft::msg_log::decided_log::DecidedLog;
+use crate::bft::msg_log::decisions::{Checkpoint, DecisionLog};
+use crate::bft::msg_log::persistent::PersistentLogModeTrait;
 use crate::bft::ordering::{Orderable, SeqNo};
 use crate::bft::timeouts::{TimeoutKind, Timeouts};
 
 use super::consensus::AbstractConsensus;
-use super::consensus::log::persistent::PersistentLogModeTrait;
 use super::globals::ReadOnly;
 use super::sync::AbstractSynchronizer;
 
@@ -49,15 +50,16 @@ pub struct RecoveryState<S, O> {
     // used to replay log on recovering replicas;
     // the request batches have been concatenated,
     // for memory efficiency
+    //TODO: I don't think this is necessary and it adds so much More potential memory usage (2x) with the declog
     pub(crate) requests: Vec<O>,
     pub(crate) declog: DecisionLog<O>,
 }
 
 /// Allow a replica to recover from the state received by peer nodes.
-pub fn install_recovery_state<S, T, K, W>(
+pub fn install_recovery_state<S, T, K>(
     recovery_state: RecoveryState<State<S>, Request<S>>,
     synchronizer: &Arc<T>,
-    log: &Log<S, W>,
+    log: &mut DecidedLog<S>,
     executor: &mut ExecutorHandle<S>,
     consensus: &mut K,
 ) -> Result<()>
@@ -67,8 +69,7 @@ where
     Request<S>: Send + Clone + 'static,
     Reply<S>: Send + 'static,
     T: AbstractSynchronizer<S>,
-    K: AbstractConsensus<S>,
-    W: PersistentLogModeTrait
+    K: AbstractConsensus<S>
 {
     // TODO: maybe try to optimize this, to avoid clone(),
     // which may be quite expensive depending on the size
@@ -83,9 +84,13 @@ where
 
     // TODO: update pub/priv keys when reconfig is implemented?
 
+    //Update the current view we are in
     synchronizer.install_view(recovery_state.view.clone());
+    //Update the consensus phase
     consensus.install_new_phase(&recovery_state);
+    //Update the executor phase
     executor.install_state(state, requests)?;
+    //Persist the newly obtained state
     log.install_state(consensus.sequence_number(), recovery_state);
 
     Ok(())
@@ -228,16 +233,15 @@ where
         matches!(self.phase, ProtoPhase::WaitingCheckpoint(_, _))
     }
 
-    fn process_reply_state<T, K>(
+    fn process_reply_state<T>(
         &mut self,
         header: Header,
         message: CstMessage<State<S>, Request<S>>,
         synchronizer: &Arc<T>,
-        log: &Log<S, K>,
+        log: &DecidedLog<S>,
         node: &Node<S::Data>,
     ) where
         T: AbstractSynchronizer<S>,
-        K: PersistentLogModeTrait
     {
         let snapshot = match log.snapshot(synchronizer.view()) {
             Ok(snapshot) => snapshot,
@@ -254,18 +258,17 @@ where
     }
 
     /// Advances the state of the CST state machine.
-    pub fn process_message<T, K, W>(
+    pub fn process_message<T, K>(
         &mut self,
         progress: CstProgress<State<S>, Request<S>>,
         synchronizer: &Arc<T>,
         consensus: &K,
-        log: &Log<S, W>,
+        log: &DecidedLog<S>,
         node: &Node<S::Data>,
     ) -> CstStatus<State<S>, Request<S>>
     where
         T: AbstractSynchronizer<S>,
         K: AbstractConsensus<S>,
-        W: PersistentLogModeTrait
     {
         match self.phase {
             ProtoPhase::WaitingCheckpoint(_, _) => {
@@ -452,55 +455,62 @@ where
 
     /// Used by a recovering node to retrieve the latest sequence number
     /// attributed to a client request by the consensus layer.
-    pub fn request_latest_consensus_seq_no<T, W>(
+    pub fn request_latest_consensus_seq_no<T>(
         &mut self,
         synchronizer: &Arc<T>,
         timeouts: &Timeouts,
         node: &Node<S::Data>,
-        _log: &Log<S, W>,
     ) where
-        T: AbstractSynchronizer<S>,
-        W: PersistentLogModeTrait
+        T: AbstractSynchronizer<S>
     {
         // reset state of latest seq no. request
         self.latest_cid = SeqNo::ZERO;
         self.latest_cid_count = 0;
 
         let cst_seq = self.next_seq();
-        timeouts.timeout(self.curr_timeout, TimeoutKind::Cst(cst_seq));
+        let current_view = synchronizer.view();
+
+        timeouts.timeout_cst_request(self.curr_timeout,
+                                     current_view.params().quorum() as u32,
+                                     cst_seq);
+
         self.phase = ProtoPhase::ReceivingCid(0);
 
         let message = SystemMessage::Cst(CstMessage::new(
             cst_seq,
             CstMessageKind::RequestLatestConsensusSeq,
         ));
-        let targets = NodeId::targets(0..synchronizer.view().params().n());
+
+        let targets = NodeId::targets(0..current_view.params().n());
 
         node.broadcast(message, targets);
     }
 
     /// Used by a recovering node to retrieve the latest state.
-    pub fn request_latest_state<T, W>(
+    pub fn request_latest_state<T>(
         &mut self,
         synchronizer: &Arc<T>,
         timeouts: &Timeouts,
         node: &Node<S::Data>,
-        _log: &Log<S, W>,
     ) where
-        T: AbstractSynchronizer<S>,
-        W: PersistentLogModeTrait
+        T: AbstractSynchronizer<S>
     {
         // reset hashmap of received states
         self.received_states.clear();
 
         let cst_seq = self.next_seq();
-        timeouts.timeout(self.curr_timeout, TimeoutKind::Cst(cst_seq));
+        let current_view = synchronizer.view();
+
+        timeouts.timeout_cst_request(self.curr_timeout,
+                                     current_view.params().quorum() as u32,
+                                     cst_seq);
+
         self.phase = ProtoPhase::ReceivingState(0);
 
         //TODO: Maybe attempt to use followers to rebuild state and avoid
         // Overloading the replicas
         let message = SystemMessage::Cst(CstMessage::new(cst_seq, CstMessageKind::RequestState));
-        let targets = NodeId::targets(0..synchronizer.view().params().n());
+        let targets = NodeId::targets(0..current_view.params().n());
         node.broadcast(message, targets);
     }
 }

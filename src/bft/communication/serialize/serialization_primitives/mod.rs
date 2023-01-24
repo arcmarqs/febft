@@ -2,6 +2,7 @@ use std::io::Read;
 use std::io::Write;
 
 use crate::bft::communication::message::{ConsensusMessage, ConsensusMessageKind, Header, ObserveEventKind, ObserverMessage, PingMessage, ReplyMessage, RequestMessage, StoredMessage, SystemMessage};
+use crate::bft::communication::serialize::Persister;
 
 use crate::bft::core::server::ViewInfo;
 use crate::bft::crypto::hash::Digest;
@@ -484,10 +485,10 @@ where
                 {
                     let mut request = forwarded.reborrow().init_request();
 
-                    request.set_session_id(stored.message().session_id().into());
-                    request.set_operation_id(stored.message().sequence_number().into());
-
                     let stored_req = stored.message();
+
+                    request.set_session_id(stored_req.session_id().into());
+                    request.set_operation_id(stored_req.sequence_number().into());
 
                     let mut rq = Buf::with_capacity(DEFAULT_SERIALIZE_BUFFER_SIZE);
 

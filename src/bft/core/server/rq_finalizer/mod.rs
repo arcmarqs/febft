@@ -7,9 +7,9 @@ use crate::bft::communication::channel::{ChannelSyncRx, ChannelSyncTx};
 use crate::bft::communication::message::{RequestMessage, StoredMessage};
 use crate::bft::communication::{channel, NodeId};
 
-use crate::bft::consensus::log::persistent::PersistentLogModeTrait;
-use crate::bft::consensus::log::{operation_key, Info, Log};
 use crate::bft::executable::{ExecutorHandle, Request, Service, UpdateBatch};
+use crate::bft::msg_log::{Info, Log, operation_key};
+use crate::bft::msg_log::persistent::PersistentLogModeTrait;
 use crate::bft::ordering::{Orderable, SeqNo};
 
 type RequestToProcess<O> = (
@@ -23,13 +23,12 @@ const REQ_BATCH_BUFF: usize = 1024;
 
 ///Made to finish the requests and clean up the logging.
 /// This is not currently in use
-pub struct RqFinalizer<S, T>
+pub struct RqFinalizer<S>
 where
     S: Service,
-    T: PersistentLogModeTrait,
 {
     node_id: NodeId,
-    log: Arc<Log<S, T>>,
+    log: Arc<Log<S>>,
     executor: ExecutorHandle<S>,
     channel: ChannelSyncRx<RequestToProcess<Request<S>>>,
 }
@@ -84,14 +83,13 @@ where
     }
 }
 
-impl<S, T> RqFinalizer<S, T>
+impl<S> RqFinalizer<S>
 where
     S: Service + 'static,
-    T: PersistentLogModeTrait + 'static
 {
     pub fn new(
         node: NodeId,
-        log: Arc<Log<S, T>>,
+        log: Arc<Log<S>>,
         executor_handle: ExecutorHandle<S>,
     ) -> RqFinalizerHandle<S> {
         let (ch_tx, ch_rx) = channel::new_bounded_sync(REQ_BATCH_BUFF);

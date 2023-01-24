@@ -7,13 +7,13 @@ use crate::bft::{
     communication::{
         channel::{self, ChannelSyncRx, ChannelSyncTx},
     },
-    consensus::log::Info,
     crypto::hash::Digest,
     executable::{ExecutorHandle, Request, Service, UpdateBatch},
     ordering::{Orderable, SeqNo},
 };
 
 use crate::bft::error::*;
+use crate::bft::msg_log::Info;
 
 use super::{ResponseMessage, ResponseMsg};
 
@@ -28,6 +28,7 @@ pub type PendingBatch<S> = (BatchInfo<S>, Vec<Digest>);
 pub struct ConsensusBacklog<S: Service> {
     rx: ChannelSyncRx<PendingBatch<S>>,
 
+    //Receives messages from the persistent log
     logger_rx: ChannelSyncRx<ResponseMsg>,
 
     //The handle to the executor
@@ -45,7 +46,6 @@ pub struct ConsensusBacklog<S: Service> {
 
 ///A detachable handle so we deliver work to the
 /// consensus back log thread
-#[derive(Clone)]
 pub struct ConsensusBackLogHandle<S: Service> {
     rq_tx: ChannelSyncTx<PendingBatch<S>>,
     logger_tx: ChannelSyncTx<ResponseMsg>,
@@ -59,12 +59,21 @@ impl<S: Service> ConsensusBackLogHandle<S> {
 
     pub fn queue_batch(&self, batch: PendingBatch<S>) -> Result<()> {
         if let Err(err) =  self.rq_tx.send(batch) {
-            Err(Error::simple_with_msg(ErrorKind::ConsensusLogPersistent, format!("{:?}", err).as_str()))
+            Err(Error::simple_with_msg(ErrorKind::MsgLogPersistent, format!("{:?}", err).as_str()))
         } else {
             Ok(())
         }
     }
 
+}
+
+impl<S: Service> Clone for ConsensusBackLogHandle<S> {
+    fn clone(&self) -> Self {
+        Self {
+            rq_tx: self.rq_tx.clone(),
+            logger_tx: self.logger_tx.clone()
+        }
+    }
 }
 
 ///This channel size serves as the "buffer" for the amount of consensus instances
