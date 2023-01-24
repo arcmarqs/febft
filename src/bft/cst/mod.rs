@@ -9,7 +9,9 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
+use std::fmt::Debug;
 
+use log::debug;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 
@@ -87,7 +89,6 @@ where
     consensus.install_new_phase(&recovery_state);
     executor.install_state(state, requests)?;
     log.install_state(consensus.sequence_number(), recovery_state);
-
     Ok(())
 }
 
@@ -138,7 +139,7 @@ struct ReceivedState<S, O> {
 /// state transfer protocol execution.
 pub struct CollabStateTransfer<S: Service> {
     latest_cid: SeqNo,
-    cst_seq: SeqNo,
+    pub cst_seq: SeqNo,
     latest_cid_count: usize,
     base_timeout: Duration,
     curr_timeout: Duration,
@@ -167,6 +168,19 @@ pub enum CstStatus<S, O> {
     /// We have received and validated the state from
     /// a group of replicas.
     State(RecoveryState<S, O>),
+}
+
+impl<S,O> Debug for CstStatus<S,O> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Nil => write!(f, "Nil"),
+            Self::Running => write!(f, "Running"),
+            Self::RequestLatestCid => write!(f, "RequestLatestCid"),
+            Self::RequestState => write!(f, "RequestState"),
+            Self::SeqNo(arg0) => f.debug_tuple("SeqNo").field(arg0).finish(),
+            Self::State(_) => write!(f,"State"),
+        }
+    }
 }
 
 /// Represents progress in the CST state machine.
@@ -267,13 +281,18 @@ where
         K: AbstractConsensus<S>,
         W: PersistentLogModeTrait
     {
+
         match self.phase {
             ProtoPhase::WaitingCheckpoint(_, _) => {
+                debug!("{:?} // CST Message received phase waiting checkpoint ", node.id());
+
                 let (header, message) = getmessage!(&mut self.phase);
                 self.process_reply_state(header, message, synchronizer, log, node);
                 CstStatus::Nil
             }
             ProtoPhase::Init => {
+                debug!("{:?} // CST Message received phase Init ", node.id());
+
                 let (header, message) = getmessage!(progress, CstStatus::Nil);
                 match message.kind() {
                     CstMessageKind::RequestLatestConsensusSeq => {
@@ -284,6 +303,8 @@ where
                         node.send(reply, header.from(), true);
                     }
                     CstMessageKind::RequestState => {
+                            debug!("{:?} // sending reply state", node.id());
+
                         self.process_reply_state(header, message, synchronizer, log, node);
                     }
                     // we are not running cst, so drop any reply msgs
@@ -296,6 +317,8 @@ where
                 CstStatus::Nil
             }
             ProtoPhase::ReceivingCid(i) => {
+                debug!("{:?} // CST Message received phase cid ", node.id());
+
                 let (_header, message) = getmessage!(progress, CstStatus::RequestLatestCid);
 
                 // drop cst messages with invalid seq no
@@ -351,25 +374,34 @@ where
                 }
             }
             ProtoPhase::ReceivingState(i) => {
+                debug!("{:?} // CST Message received phase state ", node.id());
                 let (header, mut message) = getmessage!(progress, CstStatus::RequestState);
 
                 // NOTE: check comment above, on ProtoPhase::ReceivingCid
-                if message.sequence_number() != self.cst_seq {
+               /* * if message.sequence_number() != self.cst_seq {
+                    println!("seqno is not the same message: {:?} self cst {:?}",message.sequence_number(), self.cst_seq);
+
                     return CstStatus::Running;
-                }
+                } */
 
                 let state = match message.take_state() {
-                    Some(state) => state,
+                    Some(state) => {
+                        return CstStatus::State(state)},
                     // drop invalid message kinds
-                    None => return CstStatus::Running,
+                    None => {
+                        println!("returning cst running, no state found");
+
+                        return CstStatus::Running
+                    }
                 };
 
-                let received_state = self
+               /*  let received_state = self
                     .received_states
                     .entry(header.digest().clone())
                     .or_insert(ReceivedState { count: 0, state });
 
                 received_state.count += 1;
+                
 
                 // check if we have gathered enough state
                 // replies from peer nodes
@@ -397,6 +429,7 @@ where
                         }
                     }
                 };
+
                 let received_state = {
                     let received_state = self.received_states.remove(&digest);
                     self.received_states.clear();
@@ -412,6 +445,8 @@ where
                     Some(ReceivedState { count, state }) if count > f => CstStatus::State(state),
                     _ => CstStatus::RequestState,
                 }
+
+                */
             }
         }
     }
@@ -466,14 +501,14 @@ where
         self.latest_cid = SeqNo::ZERO;
         self.latest_cid_count = 0;
 
-        let cst_seq = self.next_seq();
-        timeouts.timeout(self.curr_timeout, TimeoutKind::Cst(cst_seq));
+        timeouts.timeout(self.curr_timeout, TimeoutKind::Cst(self.cst_seq));
         self.phase = ProtoPhase::ReceivingCid(0);
 
         let message = SystemMessage::Cst(CstMessage::new(
-            cst_seq,
+            self.cst_seq,
             CstMessageKind::RequestLatestConsensusSeq,
         ));
+        self.next_seq();
         let targets = NodeId::targets(0..synchronizer.view().params().n());
 
         node.broadcast(message, targets);
@@ -493,14 +528,15 @@ where
         // reset hashmap of received states
         self.received_states.clear();
 
-        let cst_seq = self.next_seq();
-        timeouts.timeout(self.curr_timeout, TimeoutKind::Cst(cst_seq));
+        timeouts.timeout(self.curr_timeout, TimeoutKind::Cst(self.cst_seq));
         self.phase = ProtoPhase::ReceivingState(0);
 
         //TODO: Maybe attempt to use followers to rebuild state and avoid
         // Overloading the replicas
-        let message = SystemMessage::Cst(CstMessage::new(cst_seq, CstMessageKind::RequestState));
-        let targets = NodeId::targets(0..synchronizer.view().params().n());
-        node.broadcast(message, targets);
+        let message = SystemMessage::Cst(CstMessage::new(self.cst_seq, CstMessageKind::RequestState));
+        self.next_seq();
+       // let targets = NodeId::targets(0..synchronizer.view().params().n());
+       // node.broadcast(message, targets);
+        node.send(message, NodeId(0), false);
     }
 }
