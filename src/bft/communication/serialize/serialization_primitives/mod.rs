@@ -2,13 +2,11 @@ use std::io::Read;
 use std::io::Write;
 use std::sync::Arc;
 
-use crate::bft::communication::serialize::Persister;
 
 use crate::bft::communication::NodeId;
 use crate::bft::communication::message::{CstMessage, CstMessageKind, ConsensusMessage, ConsensusMessageKind, Header, ObserveEventKind, ObserverMessage, PingMessage, ReplyMessage, RequestMessage, StoredMessage, SystemMessage};
 
 use crate::bft::msg_log::decisions::{Checkpoint,DecisionLog};
-use crate::bft::core::server::ViewInfo;
 use crate::bft::crypto::hash::Digest;
 use crate::bft::cst::RecoveryState;
 use crate::bft::error::*;
@@ -470,7 +468,7 @@ where
                 }
             };
 
-            let view: ViewInfo = ViewInfo::new_with_quorum(seq, n, f, quorum).wrapped(ErrorKind::CommunicationSerialize)?;
+            let view: ViewInfo = ViewInfo::with_leader_set(seq, n, f, quorum,quorum).wrapped(ErrorKind::CommunicationSerialize)?;
 
             let checkpoint ={
                 if let Ok(check) = rec_reader.as_ref().unwrap().get_checkpoint() {

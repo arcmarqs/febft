@@ -764,7 +764,7 @@ impl<S> Synchronizer<S>
                                     buf,
                                     prng_state.next_state(),
                                     Some(digest),
-                                    Some(node_sign.get_key_pair()),
+                                    Some(node_sign.key_pair()),
                                 ).into_inner();
 
                                 if let SystemMessage::Consensus(consensus) = forged_preprepare {
@@ -1047,7 +1047,7 @@ impl<S> Synchronizer<S>
             .unwrap_or(proposed.into_inner());
 
         //TODO: Install the Last CID that was received in the finalize state
-        if log.decision_log().last_execution().unwrap_or(SeqNo::ZERO) + 1 == curr_cid {
+        if log.decision_log().last_execution().unwrap_or(SeqNo::ZERO).next() == curr_cid {
             // We are missing the last decision, which should be included in the collect data
             // sent by the leader in the SYNC message
         }

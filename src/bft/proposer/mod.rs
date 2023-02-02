@@ -311,7 +311,7 @@ impl<S: Service + 'static> Proposer<S> {
             ConsensusMessageKind::PrePrepare(currently_accumulated),
         ));
 
-        let targets = view.quorum_members().iter();
+        let targets = view.quorum_members().to_owned().into_iter();
 
         self.node_ref.broadcast_signed(message, targets);
     }
