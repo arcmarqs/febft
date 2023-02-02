@@ -14,6 +14,7 @@ use crate::bft::cst::RecoveryState;
 use crate::bft::error::*;
 use crate::bft::globals::ReadOnly;
 use crate::bft::ordering::{Orderable, SeqNo};
+use crate::bft::sync::view::ViewInfo;
 
 use super::{Buf, SharedData};
 

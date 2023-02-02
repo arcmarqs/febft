@@ -22,9 +22,9 @@ use crate::bft::executable::{ExecutorHandle, Reply, Request, Service, State, Uno
 use crate::bft::msg_log::pending_decision::PendingRequestLog;
 use crate::bft::msg_log::persistent::PersistentLogModeTrait;
 use crate::bft::ordering::Orderable;
+use crate::bft::sync::view::ViewInfo;
 use crate::bft::timeouts::{Timeouts};
 
-use super::core::server::ViewInfo;
 use super::ordering::SeqNo;
 use super::sync::{Synchronizer, AbstractSynchronizer};
 
@@ -311,9 +311,9 @@ impl<S: Service + 'static> Proposer<S> {
             ConsensusMessageKind::PrePrepare(currently_accumulated),
         ));
 
-        let targets = NodeId::targets(0..view.params().n());
+        let targets = view.quorum_members().iter();
 
-        self.node_ref.broadcast(message, targets);
+        self.node_ref.broadcast_signed(message, targets);
     }
 
     /// Attempt to propose an unordered request batch
