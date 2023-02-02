@@ -4,7 +4,7 @@ pub mod persistent_db_tests {
 
     use log::kv;
 
-    use crate::bft::{persistentdb::KVDB, ordering::SeqNo, communication::NodeId, consensus::log::persistent::make_msg_seq};
+    use crate::bft::{persistentdb::KVDB, ordering::SeqNo, communication::NodeId, msg_log::persistent::make_msg_seq};
 
     const DB_PATH: &str = "test_db";
 
@@ -77,7 +77,7 @@ pub mod persistent_db_tests {
             for node in FIRST_NODE..LAST_NODE {
                 let node = NodeId::from(node);
                 
-                let key = crate::bft::consensus::log::persistent::make_msg_seq(seq, Some(node));
+                let key = crate::bft::msg_log::persistent::make_msg_seq(seq, Some(node));
 
                 kvdb.set(CF_TEST_2, key, TEST_VALUE).expect("Failed to set");
 

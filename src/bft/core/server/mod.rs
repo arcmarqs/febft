@@ -254,7 +254,6 @@ impl<S> Replica<S>
             debug!("{:?} // Installed state with last seq {:?} from memory",node.id(), last_seq);
             Some((state, executed_requests))
         } else {
-            seq = SeqNo::ZERO;
 
             view = ViewInfo::new(SeqNo::ZERO, n, f)?;
 
@@ -728,6 +727,15 @@ impl<S> Replica<S>
 
                 return Ok(());
             }
+        }
+
+        if self.node.id() == NodeId(2) {
+            self.cst.request_latest_state(
+                &self.synchronizer,
+                &self.timeouts,
+                &self.node,
+            );
+            self.switch_phase(ReplicaPhase::RetrievingState);
         }
 
         // retrieve the next message to be processed.

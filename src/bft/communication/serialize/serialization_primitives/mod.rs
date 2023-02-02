@@ -2,14 +2,12 @@ use std::io::Read;
 use std::io::Write;
 use std::sync::Arc;
 
-use crate::bft::communication::message::{ConsensusMessage, ConsensusMessageKind, Header, ObserveEventKind, ObserverMessage, PingMessage, ReplyMessage, RequestMessage, StoredMessage, SystemMessage};
 use crate::bft::communication::serialize::Persister;
 
 use crate::bft::communication::NodeId;
 use crate::bft::communication::message::{CstMessage, CstMessageKind, ConsensusMessage, ConsensusMessageKind, Header, ObserveEventKind, ObserverMessage, PingMessage, ReplyMessage, RequestMessage, StoredMessage, SystemMessage};
 
-use crate::bft::consensus::log::Checkpoint;
-use crate::bft::consensus::log::DecisionLog;
+use crate::bft::msg_log::decisions::{Checkpoint,DecisionLog};
 use crate::bft::core::server::ViewInfo;
 use crate::bft::crypto::hash::Digest;
 use crate::bft::cst::RecoveryState;
@@ -478,7 +476,7 @@ where
                     let appstate = S::deserialize_state(check.get_appstate().unwrap())?;
                     let seq_no = check.get_seq();
 
-                   Arc::new(ReadOnly::new(Checkpoint::new(seq_no.into(), appstate)))
+                   Checkpoint::new(seq_no.into(), appstate)
 
                 } else {
                     panic!("Couldn't find checkpoint");

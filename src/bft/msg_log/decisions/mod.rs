@@ -177,6 +177,20 @@ impl<O: Clone> DecisionLog<O> {
         }
     }
 
+    /// Creates a decision log with data from a CST message
+    pub fn import_from_message(
+        last_exec: Option<SeqNo>, 
+        pre_prepares: Vec<Arc<ReadOnly<StoredMessage<ConsensusMessage<O>>>>>,
+        prepares: Vec<Arc<ReadOnly<StoredMessage<ConsensusMessage<O>>>>>,
+        commits: Vec<Arc<ReadOnly<StoredMessage<ConsensusMessage<O>>>>> ) -> Self {
+        Self {
+            last_exec,
+            pre_prepares,
+            prepares,
+            commits,
+        }
+    }
+
     /// Returns the sequence number of the last executed batch of client
     /// requests, assigned by the conesensus layer.
     pub fn last_execution(&self) -> Option<SeqNo> {
