@@ -468,7 +468,7 @@ where
                 }
             };
 
-            let view: ViewInfo = ViewInfo::with_leader_set(seq, n, f, quorum,quorum).wrapped(ErrorKind::CommunicationSerialize)?;
+            let view: ViewInfo = ViewInfo::with_leader_set(seq, n, f, quorum,vec![NodeId(0)]).wrapped(ErrorKind::CommunicationSerialize)?;
 
             let checkpoint ={
                 if let Ok(check) = rec_reader.as_ref().unwrap().get_checkpoint() {

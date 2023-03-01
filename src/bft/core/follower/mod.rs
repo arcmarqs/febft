@@ -645,6 +645,33 @@ impl<S: Service + 'static> Follower<S> {
         Ok(())
     }
 
+    pub fn cst_request_timed_out(&mut self, seq: SeqNo) -> bool {
+        let status = self.cst.timed_out(seq);
+
+        match status {
+            CstStatus::RequestLatestCid => {
+                self.cst.request_latest_consensus_seq_no(
+                    &self.synchronizer,
+                    &self.timeouts,
+                    &self.node,
+                );
+
+                true
+            }
+            CstStatus::RequestState => {
+                self.cst.request_latest_state(
+                    &self.synchronizer,
+                    &self.timeouts,
+                    &self.node,
+                );
+
+                true
+            }
+            // nothing to do
+            _ => false,
+        }
+    }
+
     ///Receive a state delivered by the execution layer.
     /// Also must receive the sequence number of the last consensus instance executed in that state.
     fn execution_finished_with_appstate(&mut self, seq: SeqNo, appstate: State<S>) -> Result<()> {
@@ -669,7 +696,7 @@ impl<S: Service + 'static> Follower<S> {
         for timeout_kind in timeouts {
             match timeout_kind {
                 TimeoutKind::Cst(cst_seq) => {
-                    if self.cst.cst_request_timed_out(cst_seq) {
+                    if self.cst_request_timed_out(cst_seq) {
                         self.switch_phase(FollowerPhase::RetrievingStatePhase);
                     }
                 }

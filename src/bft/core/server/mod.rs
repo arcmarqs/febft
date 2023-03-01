@@ -550,14 +550,14 @@ impl<S> Replica<S>
             }
         }
 
-        if self.node.id() == NodeId(2) {
+   /*    if self.node.id() == NodeId(2) {
             self.cst.request_latest_state(
                 &self.synchronizer,
                 &self.timeouts,
                 &self.node,
             );
             self.switch_phase(ReplicaPhase::RetrievingState);
-        }
+        } */
 
         // retrieve the next message to be processed.
         //
@@ -565,10 +565,15 @@ impl<S> Replica<S>
         // `TboQueue`, in the consensus module.
         let polled_message = self.consensus.poll(&self.pending_request_log);
 
-        if self.id() == NodeId(2) && self.consensus.sequence_number() > SeqNo::from(150) {
-
+       /*  if self.id() == NodeId(2){
+            self.cst.request_latest_state(
+                &self.synchronizer,
+                &self.timeouts,
+                &self.node,
+            );
             self.switch_phase(ReplicaPhase::RetrievingState)
-        }
+        } */
+
         let _leader = self.synchronizer.view().leader() == self.id();
 
         let message = match polled_message {
@@ -862,6 +867,34 @@ impl<S> Replica<S>
         Ok(())
     }
 
+   /*  pub fn cst_request_timed_out(&mut self, seq: SeqNo) -> bool {
+        let status = self.cst.timed_out(seq);
+
+        match status {
+            CstStatus::RequestLatestCid => {
+                self.cst.request_latest_consensus_seq_no(
+                    &self.synchronizer,
+                    &self.timeouts,
+                    &self.node,
+                );
+
+                true
+            }
+            CstStatus::RequestState => {
+                self.cst.request_latest_state(
+                    &self.synchronizer,
+                    &self.timeouts,
+                    &self.node,
+                );
+
+                true
+            }
+            // nothing to do
+            _ => false,
+        }
+    }
+    */
+
     fn execution_finished_with_appstate(&mut self, seq: SeqNo, appstate: State<S>) -> Result<()> {
         self.decided_log.finalize_checkpoint(seq, appstate)?;
         if self.cst.needs_checkpoint() {
@@ -890,7 +923,7 @@ impl<S> Replica<S>
         for timeout_kind in timeouts {
             match timeout_kind {
                 TimeoutKind::Cst(cst_seq) => {
-                    if self.cst.cst_request_timed_out(cst_seq) {
+                    if self.cst.cst_request_timed_out(cst_seq,&self.synchronizer,&self.timeouts,&self.node) {
                         self.switch_phase(ReplicaPhase::RetrievingState);
                     }
                 }

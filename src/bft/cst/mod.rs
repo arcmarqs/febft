@@ -30,7 +30,7 @@ use crate::bft::timeouts::{TimeoutKind, Timeouts};
 
 use super::consensus::AbstractConsensus;
 use super::globals::ReadOnly;
-use super::sync::AbstractSynchronizer;
+use super::sync::{AbstractSynchronizer, Synchronizer};
 
 enum ProtoPhase<S, O> {
     Init,
@@ -463,24 +463,26 @@ where
     /// Handle a timeout received from the timeouts layer.
     /// Returns a bool to signify if we must move to the Retrieving state
     /// If the timeout is no longer relevant, returns false (Can remain in current phase)
-    pub fn cst_request_timed_out(&mut self, seq: SeqNo) -> bool {
-        let status = self.cst.timed_out(seq);
+    
+    // Moved this function to the server module
+    pub fn cst_request_timed_out(&mut self, seq: SeqNo, sync: &Arc<Synchronizer<S>>, timeout: &Timeouts,node: &Node<S::Data>) -> bool {
+        let status = self.timed_out(seq);
 
         match status {
             CstStatus::RequestLatestCid => {
-                self.cst.request_latest_consensus_seq_no(
-                    &self.synchronizer,
-                    &self.timeouts,
-                    &self.node,
+                self.request_latest_consensus_seq_no(
+                    sync,
+                    timeout,
+                    node,
                 );
 
                 true
             }
             CstStatus::RequestState => {
-                self.cst.request_latest_state(
-                    &self.synchronizer,
-                    &self.timeouts,
-                    &self.node,
+                self.request_latest_state(
+                    sync,
+                    timeout,
+                    node,
                 );
 
                 true
@@ -489,8 +491,9 @@ where
             _ => false,
         }
     }
+    
 
-    fn timed_out(&mut self, seq: SeqNo) -> CstStatus<State<S>, Request<S>> {
+    pub fn timed_out(&mut self, seq: SeqNo) -> CstStatus<State<S>, Request<S>> {
         if seq.next() != self.cst_seq {
             // the timeout we received is for a request
             // that has already completed, therefore we ignore it
