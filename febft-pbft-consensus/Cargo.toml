@@ -23,7 +23,6 @@ default = [
     "atlas-common/crypto_signature_ring_ed25519",
     "atlas-common/crypto_hash_blake3_blake3",
     "atlas-common/collections_randomstate_fxhash",
-    "atlas-common/persistent_db_rocksdb",
     "serialize_serde"
 ]
 
