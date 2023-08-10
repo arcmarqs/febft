@@ -9,6 +9,7 @@ use std::marker::PhantomData;
 
 use std::time::{Duration, Instant};
 use log::{debug, error, info};
+use num_traits::real::Real;
 use atlas_common::collections;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable};
@@ -18,6 +19,7 @@ use atlas_execution::serialize::ApplicationData;
 use atlas_core::messages::{ClientRqInfo, ForwardedRequestsMessage, RequestMessage, StoredRequestMessage, SystemMessage};
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::persistent_log::{OrderingProtocolLog, StatefulOrderingProtocolLog};
+use atlas_core::reconfiguration_protocol::QuorumJoinCert;
 use atlas_core::request_pre_processing::{PreProcessorMessage, RequestPreProcessor};
 use atlas_core::serialize::{LogTransferMessage, ReconfigurationProtocolMessage, StateTransferMessage};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, TimeoutPhase, Timeouts};
@@ -59,19 +61,17 @@ impl<D: ApplicationData + 'static> ReplicaSynchronizer<D> {
     ///
     /// Therefore, we start by clearing our stopped requests and treating them as
     /// newly proposed requests (by resetting their timer)
-    pub(super) fn handle_stopping_quorum<NT, PL, RP>(
+    pub(super) fn handle_stopping_quorum<NT, PL>(
         &self,
-        base_sync: &Synchronizer<D, RP>,
+        base_sync: &Synchronizer<D>,
         previous_view: ViewInfo,
-        consensus: &Consensus<D, PL, RP>,
+        consensus: &Consensus<D, PL>,
         log: &Log<D, PL>,
         pre_processor: &RequestPreProcessor<D::Request>,
         timeouts: &Timeouts,
         node: &NT,
-    )
-        where RP: ReconfigurationProtocolMessage + 'static,
-              NT: OrderProtocolSendNode<D, PBFT<D, RP>>,
-              PL: OrderingProtocolLog<PBFTConsensus<D, RP>> {
+    ) where NT: OrderProtocolSendNode<D, PBFT<D>>,
+            PL: OrderingProtocolLog<PBFTConsensus<D>> {
         // NOTE:
         // - install new view (i.e. update view seq no) (Done in the synchronizer)
         // - add requests from STOP into client requests
@@ -82,7 +82,7 @@ impl<D: ApplicationData + 'static> ReplicaSynchronizer<D> {
         self.take_stopped_requests_and_register_them(base_sync, pre_processor, timeouts);
         self.watch_all_requests(timeouts);
 
-        let view_info = base_sync.view();
+        let view_info = base_sync.next_view().expect("We should have a next view if we are at this point");
 
         let current_view_seq = view_info.sequence_number();
         let current_leader = view_info.leader();
@@ -110,21 +110,19 @@ impl<D: ApplicationData + 'static> ReplicaSynchronizer<D> {
     /// Start a new view change
     /// Receives the requests that it should send to the other
     /// nodes in its STOP message
-    pub(super) fn handle_begin_view_change<NT, RP>(
+    pub(super) fn handle_begin_view_change<NT>(
         &self,
-        base_sync: &Synchronizer<D, RP>,
+        base_sync: &Synchronizer<D>,
         timeouts: &Timeouts,
         node: &NT,
         timed_out: Option<Vec<StoredRequestMessage<D::Request>>>,
-    ) where RP: ReconfigurationProtocolMessage + 'static,
-            NT: OrderProtocolSendNode<D, PBFT<D, RP>> {
+    ) where NT: OrderProtocolSendNode<D, PBFT<D>> {
         // stop all timers
         self.unwatch_all_requests(timeouts);
 
         // broadcast STOP message with pending requests collected
         // from peer nodes' STOP messages
-        let requests = self.stopped_requests(base_sync,
-                                             timed_out);
+        let requests = self.stopped_requests(base_sync, timed_out);
 
         let current_view = base_sync.view();
 
@@ -141,6 +139,26 @@ impl<D: ApplicationData + 'static> ReplicaSynchronizer<D> {
         let targets = current_view.quorum_members().clone();
 
         node.broadcast(message, targets.into_iter());
+    }
+
+    pub(super) fn handle_begin_quorum_view_change<NT>(
+        &self,
+        base_sync: &Synchronizer<D>,
+        timeouts: &Timeouts,
+        node: &NT,
+        join_cert: NodeId,
+    ) where NT: OrderProtocolSendNode<D, PBFT<D>> {
+        let current_view = base_sync.view();
+
+        info!("{:?} // Beginning a quorum view change to next view with new node: {:?}", node.id(), join_cert);
+
+        let message = ViewChangeMessageKind::StopQuorumJoin(join_cert);
+
+        let message = ViewChangeMessage::new(current_view.sequence_number().next(), message);
+
+        let message = PBFTMessage::ViewChange(message);
+
+        node.broadcast_signed(message, current_view.quorum_members().clone().into_iter());
     }
 
     /// Watch a vector of requests received
@@ -207,10 +225,9 @@ impl<D: ApplicationData + 'static> ReplicaSynchronizer<D> {
     }
 
     /// Register all of the requests that are missing from the view change
-    fn take_stopped_requests_and_register_them<RP>(&self, base_sync: &Synchronizer<D, RP>,
-                                                   pre_processor: &RequestPreProcessor<D::Request>,
-                                                   timeouts: &Timeouts)
-        where RP: ReconfigurationProtocolMessage + 'static {
+    fn take_stopped_requests_and_register_them(&self, base_sync: &Synchronizer<D>,
+                                               pre_processor: &RequestPreProcessor<D::Request>,
+                                               timeouts: &Timeouts) {
         // TODO: maybe optimize this `stopped_requests` call, to avoid
         // a heap allocation of a `Vec`?
 
@@ -250,19 +267,12 @@ impl<D: ApplicationData + 'static> ReplicaSynchronizer<D> {
     /// Handle a timeout received from the timeouts layer.
     ///
     /// This timeout pertains to a group of client requests awaiting to be decided.
-    //
-    //
-    // TODO: fix current timeout impl, as most requests won't actually
-    // have surpassed their defined timeout period, after the timeout event
-    // is fired on the master channel of the core server task
-    //
-    pub fn client_requests_timed_out<RP>(
+    pub fn client_requests_timed_out(
         &self,
-        base_sync: &Synchronizer<D, RP>,
+        base_sync: &Synchronizer<D>,
         my_id: NodeId,
         timed_out_rqs: &Vec<RqTimeout>,
-    ) -> SynchronizerStatus<D::Request>
-        where RP: ReconfigurationProtocolMessage + 'static {
+    ) -> SynchronizerStatus<D::Request> {
 
         //// iterate over list of watched pending requests,
         //// and select the ones to be stopped or forwarded
@@ -330,15 +340,15 @@ impl<D: ApplicationData + 'static> ReplicaSynchronizer<D> {
         SynchronizerStatus::RequestsTimedOut { forwarded, stopped }
     }
 
+
     /// Forward the requests that timed out, `timed_out`, to all the nodes in the
     /// current view.
-    pub fn forward_requests<NT, RP>(
+    pub fn forward_requests<NT>(
         &self,
-        base_sync: &Synchronizer<D, RP>,
+        base_sync: &Synchronizer<D>,
         timed_out: Vec<StoredRequestMessage<D::Request>>,
         node: &NT,
-    ) where RP: ReconfigurationProtocolMessage + 'static,
-            NT: OrderProtocolSendNode<D, PBFT<D, RP>> {
+    ) where NT: OrderProtocolSendNode<D, PBFT<D>> {
         let message = ForwardedRequestsMessage::new(timed_out);
         let view = base_sync.view();
 
@@ -351,12 +361,11 @@ impl<D: ApplicationData + 'static> ReplicaSynchronizer<D> {
     /// to other nodes
     ///
     /// Clones all the nodes in the `stopped` list
-    fn stopped_requests<RP>(
+    fn stopped_requests(
         &self,
-        base_sync: &Synchronizer<D, RP>,
+        base_sync: &Synchronizer<D>,
         requests: Option<Vec<StoredRequestMessage<D::Request>>>,
-    ) -> Vec<StoredRequestMessage<D::Request>>
-        where RP: ReconfigurationProtocolMessage + 'static {
+    ) -> Vec<StoredRequestMessage<D::Request>> {
         // Use a hashmap so we are sure we don't send any repeat requests in our stop messages
         let mut all_reqs = collections::hash_map();
 
@@ -381,12 +390,11 @@ impl<D: ApplicationData + 'static> ReplicaSynchronizer<D> {
         all_reqs.drain().map(|(_, stop)| stop).collect()
     }
 
-    fn stopped_request_digests<RP>(
+    fn stopped_request_digests(
         &self,
-        base_sync: &Synchronizer<D, RP>,
+        base_sync: &Synchronizer<D>,
         requests: Option<Vec<StoredRequestMessage<D::Request>>>,
-    ) -> Vec<ClientRqInfo>
-        where RP: ReconfigurationProtocolMessage + 'static {
+    ) -> Vec<ClientRqInfo> {
 
         // Use a hashmap so we are sure we don't send any repeat requests in our stop messages
         let mut all_reqs = collections::hash_set();
@@ -411,9 +419,8 @@ impl<D: ApplicationData + 'static> ReplicaSynchronizer<D> {
     }
 
     /// Drain our current received stopped messages
-    fn drain_stopped_request<RP>(&self, base_sync: &Synchronizer<D, RP>) ->
-    Vec<StoredRequestMessage<D::Request>>
-        where RP: ReconfigurationProtocolMessage + 'static {
+    fn drain_stopped_request(&self, base_sync: &Synchronizer<D>) ->
+    Vec<StoredRequestMessage<D::Request>> {
 
         // Use a hashmap so we are sure we don't send any repeat requests in our stop messages
         let mut all_reqs = collections::hash_map();
