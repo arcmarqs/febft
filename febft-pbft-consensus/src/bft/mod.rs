@@ -3,19 +3,13 @@
 //! By default, it is hidden to the user, unless explicitly enabled
 //! with the feature flag `expose_impl`.
 
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 use std::ops::Drop;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
-use log::{debug, info, LevelFilter, trace, warn};
-use log4rs::{
-    append::file::FileAppender,
-    config::{Appender, Logger, Root},
-    Config,
-    encode::pattern::PatternEncoder,
-};
+use log::{debug, info, trace, warn};
 
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
@@ -24,31 +18,30 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_communication::serialize::Serializable;
-use atlas_execution::ExecutorHandle;
-use atlas_execution::serialize::ApplicationData;
-use atlas_core::messages::ClientRqInfo;
 use atlas_core::messages::Protocol;
-use atlas_core::ordering_protocol::{LoggableMessage, OrderingProtocol, OrderingProtocolArgs, OrderProtocolExecResult, OrderProtocolPoll, OrderProtocolTolerance, ProtocolConsensusDecision, ProtocolMessage, SerProof, SerProofMetadata, View};
+use atlas_core::ordering_protocol::{LoggableMessage, OrderingProtocol, OrderingProtocolArgs, OrderProtocolExecResult, OrderProtocolPoll, OrderProtocolTolerance, ProtocolConsensusDecision, SerProof, SerProofMetadata, View};
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::{ReconfigurableOrderProtocol, ReconfigurationAttemptResult};
 use atlas_core::ordering_protocol::stateful_order_protocol::{DecLog, StatefulOrderProtocol};
 use atlas_core::persistent_log::{OrderingProtocolLog, PersistableOrderProtocol, StatefulOrderingProtocolLog};
-use atlas_core::reconfiguration_protocol::{QuorumJoinCert, ReconfigurationProtocol};
-use atlas_core::request_pre_processing::{PreProcessorMessage, RequestPreProcessor};
-use atlas_core::serialize::{LogTransferMessage, NetworkView, OrderingProtocolMessage, ReconfigurationProtocolMessage, ServiceMsg, StateTransferMessage};
-use atlas_core::state_transfer::{Checkpoint};
+use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
+use atlas_core::request_pre_processing::RequestPreProcessor;
+use atlas_core::serialize::{LogTransferMessage, NetworkView, OrderingProtocolMessage, ReconfigurationProtocolMessage, StateTransferMessage};
 use atlas_core::timeouts::{RqTimeout, Timeouts};
+use atlas_execution::ExecutorHandle;
+use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::metric_duration;
+
 use crate::bft::config::PBFTConfig;
 use crate::bft::consensus::{Consensus, ConsensusPollStatus, ConsensusStatus, ProposerConsensusGuard};
 use crate::bft::message::{ConsensusMessage, ConsensusMessageKind, ObserveEventKind, PBFTMessage, ViewChangeMessage};
 use crate::bft::message::serialize::PBFTConsensus;
 use crate::bft::metric::{CONSENSUS_INSTALL_STATE_TIME_ID, MSG_LOG_INSTALL_TIME_ID};
-use crate::bft::msg_log::{initialize_decided_log};
+use crate::bft::msg_log::initialize_decided_log;
 use crate::bft::msg_log::decided_log::Log;
 use crate::bft::msg_log::decisions::{DecisionLog, Proof};
 use crate::bft::proposer::Proposer;
-use crate::bft::sync::{AbstractSynchronizer, Synchronizer, SynchronizerPollStatus, SynchronizerStatus};
+use crate::bft::sync::{AbstractSynchronizer, Synchronizer, SynchronizerPollStatus, SynchronizerStatus, SyncReconfigurationResult};
 
 pub mod consensus;
 pub mod proposer;
@@ -112,7 +105,7 @@ pub struct PBFTOrderProtocol<D, NT, PL>
     proposer: Arc<Proposer<D, NT>>,
     // The networking layer for a Node in the network (either Client or Replica)
     node: Arc<NT>,
-
+    // The handle to the executor, currently not utilized
     executor: ExecutorHandle<D>,
 }
 
@@ -291,7 +284,7 @@ impl<D, NT, PL> PBFTOrderProtocol<D, NT, PL>
 
         let sync = Synchronizer::initialize_with_quorum(node_id, view.sequence_number(), quorum.clone(), timeout_dur)?;
 
-        let consensus_guard = ProposerConsensusGuard::new(view.clone(), watermark);
+        let consensus_guard = ProposerConsensusGuard::new(sync.view(), watermark);
 
         let consensus = Consensus::<D, PL>::new_replica(node_id, &sync.view(), executor.clone(),
                                                         SeqNo::ZERO, watermark, consensus_guard.clone(),
@@ -352,7 +345,7 @@ impl<D, NT, PL> PBFTOrderProtocol<D, NT, PL>
             SynchronizerPollStatus::ResumeViewChange => {
                 debug!("{:?} // Resuming view change", self.node.id());
 
-                self.synchronizer.resume_view_change(
+                let sync_status = self.synchronizer.resume_view_change(
                     &mut self.message_log,
                     &self.timeouts,
                     &mut self.consensus,
@@ -360,6 +353,16 @@ impl<D, NT, PL> PBFTOrderProtocol<D, NT, PL>
                 );
 
                 self.switch_phase(ConsensusPhase::NormalPhase);
+
+                if let Some(sync_status) = sync_status {
+                    match sync_status {
+                        SynchronizerStatus::NewViewJoinedQuorum(decisions, node) => {
+                            let quorum_members = self.synchronizer.view().quorum_members().clone();
+                            return OrderProtocolPoll::QuorumJoined(decisions.map(|dec| vec![dec]), node, quorum_members);
+                        }
+                        _ => {}
+                    }
+                }
 
                 OrderProtocolPoll::RePoll
             }
@@ -404,7 +407,7 @@ impl<D, NT, PL> PBFTOrderProtocol<D, NT, PL>
                             warn!("Polling the sync phase should never return anything other than a run sync protocol or run cst protocol message, Protocol Finished");
                             OrderProtocolPoll::RePoll
                         }
-                    }
+                    };
                 } else {
                     // The synchronizer should never return anything other than a view
                     // change message
@@ -456,7 +459,9 @@ impl<D, NT, PL> PBFTOrderProtocol<D, NT, PL>
                     SyncPhaseRes::JoinedQuorum(to_execute, node) => {
                         info!("Replica {:?} joined the quorum, with a decision to execute? {}", node, to_execute.is_some());
 
-                        OrderProtocolExecResult::QuorumJoined(to_execute.map(|x| vec![x]), node)
+                        let new_quorum = self.synchronizer.view().quorum_members().clone();
+
+                        OrderProtocolExecResult::QuorumJoined(to_execute.map(|x| vec![x]), node, new_quorum)
                     }
                     SyncPhaseRes::RunCSTProtocol => {
                         OrderProtocolExecResult::RunCst
@@ -616,6 +621,8 @@ impl<D, NT, PL> PBFTOrderProtocol<D, NT, PL>
 
                 //After we update the state, we go back to the sync phase (this phase) so we can check if we are missing
                 //Anything or to finalize and go back to the normal phase
+                info!("Running CST protocol as requested by the synchronizer");
+
                 self.switch_phase(ConsensusPhase::SyncPhase);
 
                 SyncPhaseRes::RunCSTProtocol
@@ -842,9 +849,35 @@ impl<D, NT, PL, RP> ReconfigurableOrderProtocol<RP> for PBFTOrderProtocol<D, NT,
           NT: OrderProtocolSendNode<D, PBFT<D>> + 'static,
           PL: OrderingProtocolLog<PBFTConsensus<D>> {
     fn attempt_quorum_node_join(&mut self, joining_node: NodeId) -> Result<ReconfigurationAttemptResult> {
-        self.switch_phase(ConsensusPhase::SyncPhase);
+        let result = self.synchronizer.start_join_quorum(joining_node, &*self.node, &self.timeouts, &self.message_log);
 
-        Ok(self.synchronizer.start_join_quorum(joining_node, &*self.node, &self.timeouts, &self.message_log))
+        return match result {
+            SyncReconfigurationResult::Failed => {
+                warn!("Failed to start quorum view change to integrate node {:?}", joining_node);
+
+                Ok(ReconfigurationAttemptResult::Failed)
+            }
+            SyncReconfigurationResult::OnGoingViewChange => {
+                Ok(ReconfigurationAttemptResult::InProgress)
+            }
+            SyncReconfigurationResult::OnGoingQuorumChange(node_id) if node_id == joining_node => {
+                warn!("Received join request for node {:?} when it was already ongoing", joining_node);
+
+                Ok(ReconfigurationAttemptResult::CurrentlyReconfiguring(node_id))
+            }
+            SyncReconfigurationResult::OnGoingQuorumChange(node_id) => {
+                Ok(ReconfigurationAttemptResult::CurrentlyReconfiguring(node_id))
+            }
+            SyncReconfigurationResult::AlreadyPartOfQuorum => {
+                Ok(ReconfigurationAttemptResult::AlreadyPartOfQuorum)
+            }
+            SyncReconfigurationResult::InProgress => {
+                Ok(ReconfigurationAttemptResult::InProgress)
+            }
+            SyncReconfigurationResult::Completed => {
+                Ok(ReconfigurationAttemptResult::Successful)
+            }
+        };
     }
 
     fn joining_quorum(&mut self) -> Result<ReconfigurationAttemptResult> {
