@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::{debug, error, info, warn};
+use metrics::{CHECKPOINT_UPDATE_TIME, CHECKPOINT_UPDATE_TIME_ID};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use atlas_common::channel::ChannelSyncTx;
@@ -31,12 +32,12 @@ use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use atlas_core::state_transfer::networking::StateTransferSendNode;
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 use atlas_execution::state::monolithic_state::{InstallStateMessage, MonolithicState};
-use atlas_metrics::metrics::metric_duration;
+use atlas_metrics::metrics::{metric_duration, metric_duration_end, metric_duration_start};
 
 use crate::config::StateTransferConfig;
 use crate::message::{CstMessage, CstMessageKind};
 use crate::message::serialize::CSTMsg;
-use crate::metrics::STATE_TRANSFER_STATE_INSTALL_CLONE_TIME_ID;
+use crate::metrics::{STATE_TRANSFER_STATE_INSTALL_CLONE_TIME_ID, STATE_TRANSFER_TIME_ID, PROCESS_REQ_STATE_TIME_ID};
 
 pub mod message;
 pub mod config;
@@ -318,14 +319,18 @@ impl<S, NT, PL> StateTransferProtocol<S, NT, PL> for CollabStateTransfer<S, NT, 
 
                 self.install_channel.send(InstallStateMessage::new(state.checkpoint.state().clone())).unwrap();
 
+                println!("state transfer finished {:?}", start.elapsed());
+
                 metric_duration(STATE_TRANSFER_STATE_INSTALL_CLONE_TIME_ID, start.elapsed());
+                metric_duration_end(STATE_TRANSFER_TIME_ID);
+
 
                 return Ok(STResult::StateTransferFinished(state.checkpoint.sequence_number()));
             }
             CstStatus::SeqNo(seq) => {
                 if self.current_checkpoint_state.sequence_number() < seq {
                     debug!("{:?} // Requesting state {:?}", self.node.id(), seq);
-
+                    metric_duration_start(STATE_TRANSFER_TIME_ID);
                     self.request_latest_state(view);
                 } else {
                     debug!("{:?} // Not installing sequence number nor requesting state ???? {:?} {:?}", self.node.id(), self.current_checkpoint_state.sequence_number(), seq);
@@ -336,6 +341,7 @@ impl<S, NT, PL> StateTransferProtocol<S, NT, PL> for CollabStateTransfer<S, NT, 
                 self.request_latest_consensus_seq_no(view);
             }
             CstStatus::RequestState => {
+
                 self.request_latest_state(view);
             }
             CstStatus::Nil => {
@@ -352,6 +358,7 @@ impl<S, NT, PL> StateTransferProtocol<S, NT, PL> for CollabStateTransfer<S, NT, 
     fn handle_app_state_requested<V>(&mut self, view: V, seq: SeqNo) -> Result<ExecutionResult>
         where V: NetworkView {
         let earlier = std::mem::replace(&mut self.current_checkpoint_state, CheckpointState::None);
+        metric_duration_start(CHECKPOINT_UPDATE_TIME_ID);
 
         self.current_checkpoint_state = match earlier {
             CheckpointState::None => CheckpointState::Partial { seq },
@@ -406,6 +413,7 @@ impl<S, NT, PL> MonolithicStateTransfer<S, NT, PL> for CollabStateTransfer<S, NT
 
     fn handle_state_received_from_app<V>(&mut self, view: V, state: Arc<ReadOnly<Checkpoint<S>>>) -> Result<()>
         where V: NetworkView {
+            println!("checkpoint");
         self.finalize_checkpoint(state)?;
 
         if self.needs_checkpoint() {
@@ -521,6 +529,9 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
         message: CstMessage<S>,
     ) where
     {
+
+        let start = Instant::now();
+
         match &mut self.phase {
             ProtoPhase::Init => {}
             ProtoPhase::WaitingCheckpoint(waiting) => {
@@ -558,6 +569,10 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
         );
 
         self.node.send(reply, header.from(), true).unwrap();
+
+        println!("process req state finished {:?}", start.elapsed());
+
+        metric_duration(PROCESS_REQ_STATE_TIME_ID, start.elapsed());
     }
 
     /// Advances the state of the CST state machine.
@@ -837,7 +852,7 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
                 self.current_checkpoint_state = checkpoint_state;
 
                 self.persistent_log.write_checkpoint(OperationMode::NonBlockingSync(None), checkpoint)?;
-
+                metric_duration_end(CHECKPOINT_UPDATE_TIME_ID);
                 Ok(())
             }
         }
