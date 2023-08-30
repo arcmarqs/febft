@@ -11,18 +11,16 @@ use atlas_common::globals::ReadOnly;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_core::messages::ClientRqInfo;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::persistent_log::{OperationMode, OrderingProtocolLog};
-use atlas_core::serialize::{LogTransferMessage, ReconfigurationProtocolMessage, StateTransferMessage};
 use atlas_core::timeouts::Timeouts;
 use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::metric_duration;
 
 use crate::bft::consensus::accessory::{AccessoryConsensus, ConsensusDecisionAccessory};
 use crate::bft::consensus::accessory::replica::ReplicaAccessory;
-use crate::bft::message::{ConsensusMessage, ConsensusMessageKind, PBFTMessage};
+use crate::bft::message::{ConsensusMessage, ConsensusMessageKind};
 use crate::bft::message::serialize::PBFTConsensus;
 use crate::bft::metric::{ConsensusMetrics, PRE_PREPARE_ANALYSIS_ID};
 use crate::bft::msg_log::decided_log::Log;
@@ -268,7 +266,7 @@ impl<D, PL> ConsensusDecision<D, PL>
                                log: &mut Log<D, PL>,
                                node: &Arc<NT>) -> Result<DecisionStatus>
         where NT: OrderProtocolSendNode<D, PBFT<D>> + 'static,
-              PL: OrderingProtocolLog<PBFTConsensus<D>> {
+              PL: OrderingProtocolLog<D, PBFTConsensus<D>> {
         let view = synchronizer.view();
 
         return match self.phase {

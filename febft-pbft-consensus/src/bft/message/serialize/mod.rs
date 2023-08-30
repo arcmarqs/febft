@@ -6,6 +6,7 @@
 //! as [Cap'n'Proto](https://capnproto.org/capnp-tool.html), but these are
 //! expected to be implemented by the user.
 
+use std::fmt::Debug;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -20,9 +21,9 @@ use atlas_communication::message_signing::NetworkMessageSignatureVerifier;
 use atlas_communication::reconfiguration_node::NetworkInformationProvider;
 use atlas_communication::serialize::Serializable;
 use atlas_core::messages::SystemMessage;
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use atlas_core::ordering_protocol::networking::signature_ver::OrderProtocolSignatureVerificationHelper;
 use atlas_core::persistent_log::PersistableOrderProtocol;
-use atlas_core::reconfiguration_protocol::QuorumJoinCert;
-use atlas_core::serialize::{InternallyVerifiable, OrderingProtocolMessage, ReconfigurationProtocolMessage, ServiceMsg, StatefulOrderProtocolMessage};
 use atlas_execution::serialize::ApplicationData;
 
 use crate::bft::message::{ConsensusMessage, ConsensusMessageKind, PBFTMessage, ViewChangeMessage, ViewChangeMessageKind};
@@ -137,32 +138,109 @@ impl<D> PBFTConsensus<D> where D: ApplicationData {
     }
 }
 
-impl<D> InternallyVerifiable<PBFTMessage<D::Request>> for PBFTConsensus<D> where D: ApplicationData {
-    fn verify_internal_message<S, SV, NI>(network_info: &Arc<NI>, header: &Header, msg: &PBFTMessage<D::Request>) -> Result<bool>
-        where S: Serializable,
-              SV: NetworkMessageSignatureVerifier<S, NI>,
-              NI: NetworkInformationProvider {
-        match msg {
-            PBFTMessage::Consensus(consensus_msg) => {
-                Self::verify_consensus_message::<S, SV, NI>(network_info, header, consensus_msg)
-            }
-            PBFTMessage::ViewChange(view_change) => {
-                Self::verify_view_change_message::<S, SV, NI>(network_info, header, view_change)
-            }
-            PBFTMessage::ObserverMessage(_) => {
-                Ok(true)
-            }
-        }
-    }
-}
-
-impl<D> OrderingProtocolMessage for PBFTConsensus<D>
+impl<D> OrderingProtocolMessage<D> for PBFTConsensus<D>
     where D: ApplicationData, {
     type ViewInfo = ViewInfo;
     type ProtocolMessage = PBFTMessage<D::Request>;
     type LoggableMessage = ConsensusMessage<D::Request>;
     type Proof = Proof<D::Request>;
     type ProofMetadata = ProofMetadata;
+
+    fn verify_order_protocol_message<NI, OPVH>(network_info: &Arc<NI>, header: &Header, message: Self::ProtocolMessage) -> Result<(bool, Self::ProtocolMessage)> where NI: NetworkInformationProvider, OPVH: OrderProtocolSignatureVerificationHelper<D, Self, NI>, Self: Sized {
+        match &message {
+            PBFTMessage::Consensus(consensus) => {
+                match consensus.kind() {
+                    ConsensusMessageKind::PrePrepare(requests) => {
+                        for request in requests {
+                            let (result, _) = OPVH::verify_request_message(network_info, request.header(), request.message().clone())?;
+
+                            if !result {
+                                return Ok((false, message));
+                            }
+                        }
+
+                        Ok((true, message))
+                    }
+                    ConsensusMessageKind::Prepare(digest) => {
+                        Ok((true, message))
+                    }
+                    ConsensusMessageKind::Commit(digest) => {
+                        Ok((true, message))
+                    }
+                }
+            }
+            PBFTMessage::ViewChange(view_change) => {
+                match view_change.kind() {
+                    ViewChangeMessageKind::Stop(timed_out_req) => {
+                        for client_rq in timed_out_req {
+                            let (result, _) = OPVH::verify_request_message(network_info, client_rq.header(), client_rq.message().clone())?;
+
+                            if !result {
+                                return Ok((false, message));
+                            }
+                        }
+
+                        Ok((true, message))
+                    }
+                    ViewChangeMessageKind::StopQuorumJoin(_) => {
+                        Ok((true, message))
+                    }
+                    ViewChangeMessageKind::StopData(collect_data) => {
+                        if let Some(proof) = &collect_data.last_proof {}
+
+                        Ok((true, message))
+                    }
+                    ViewChangeMessageKind::Sync(leader_collects) => {
+                        let (result, _) = OPVH::verify_protocol_message(network_info, leader_collects.message().header(), PBFTMessage::Consensus(leader_collects.message().consensus().clone()))?;
+
+                        if !result {
+                            return Ok((false, message));
+                        }
+
+                        for collect in leader_collects.collects() {
+                            let (result, _) = OPVH::verify_protocol_message(network_info, collect.header(), PBFTMessage::ViewChange(collect.message().clone()))?;
+
+                            if !result {
+                                return Ok((false, message));
+                            }
+                        }
+
+                        Ok((true, message))
+                    }
+                }
+            }
+            PBFTMessage::ObserverMessage(_) => Ok((true, message))
+        }
+    }
+
+    fn verify_proof<NI, OPVH>(network_info: &Arc<NI>, proof: Self::Proof) -> Result<(bool, Self::Proof)>
+        where NI: NetworkInformationProvider, OPVH: OrderProtocolSignatureVerificationHelper<D, Self, NI>, Self: Sized {
+        for pre_prepare in proof.pre_prepares() {
+            let (result, _) = OPVH::verify_protocol_message(network_info, pre_prepare.header(), PBFTMessage::Consensus(pre_prepare.message().clone()))?;
+
+            if !result {
+                return Ok((false, proof));
+            }
+        }
+
+        for prepare in proof.prepares() {
+            let (result, _) = OPVH::verify_protocol_message(network_info, prepare.header(), PBFTMessage::Consensus(prepare.message().clone()))?;
+
+            if !result {
+                return Ok((false, proof));
+            }
+        }
+
+        for commit in proof.commits() {
+            let (result, _) = OPVH::verify_protocol_message(network_info, commit.header(), PBFTMessage::Consensus(commit.message().clone()))?;
+
+            if !result {
+                return Ok((false, proof));
+            }
+        }
+
+        return Ok((true, proof));
+    }
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: atlas_capnp::consensus_messages_capnp::protocol_message::Builder, msg: &Self::ProtocolMessage) -> Result<()> {
@@ -195,9 +273,17 @@ impl<D> OrderingProtocolMessage for PBFTConsensus<D>
     }
 }
 
-impl<D> StatefulOrderProtocolMessage for PBFTConsensus<D>
+impl<D, OP> StatefulOrderProtocolMessage<D, OP> for PBFTConsensus<D>
     where D: ApplicationData + 'static {
     type DecLog = DecisionLog<D::Request>;
+
+    fn verify_decision_log<NI, OPVH>(network_info: &Arc<NI>, dec_log: Self::DecLog) -> Result<(bool, Self::DecLog)>
+        where NI: NetworkInformationProvider,
+              D: ApplicationData,
+              OP: OrderingProtocolMessage<D>,
+              OPVH: OrderProtocolSignatureVerificationHelper<D, OP, NI>, {
+        Ok((false, dec_log))
+    }
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_declog_capnp(builder: atlas_capnp::cst_messages_capnp::dec_log::Builder, msg: &Self::DecLog) -> Result<()> {

@@ -20,25 +20,23 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo, tbo_advance_message_queue, tbo_pop_message, tbo_queue_message};
-use atlas_common::threadpool::join;
 use atlas_communication::message::{Header, StoredMessage, WireMessage};
 use atlas_communication::reconfiguration_node::NetworkInformationProvider;
-use atlas_core::messages::{ClientRqInfo, StoredRequestMessage, SystemMessage};
+use atlas_core::messages::{ClientRqInfo, StoredRequestMessage};
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::ProtocolConsensusDecision;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurationAttemptResult;
 use atlas_core::persistent_log::{OrderingProtocolLog, StatefulOrderingProtocolLog};
 use atlas_core::request_pre_processing::RequestPreProcessor;
-use atlas_core::serialize::{LogTransferMessage, ReconfigurationProtocolMessage, StateTransferMessage};
 use atlas_core::timeouts::{RqTimeout, Timeouts};
 use atlas_execution::serialize::ApplicationData;
 
-use crate::bft::PBFT;
 use crate::bft::consensus::Consensus;
 use crate::bft::message::{ConsensusMessageKind, FwdConsensusMessage, PBFTMessage, ViewChangeMessage, ViewChangeMessageKind};
 use crate::bft::message::serialize::PBFTConsensus;
 use crate::bft::msg_log::decided_log::Log;
 use crate::bft::msg_log::decisions::{CollectData, Proof, StoredConsensusMessage, ViewDecisionPair};
+use crate::bft::PBFT;
 use crate::bft::sync::view::ViewInfo;
 
 use self::{follower_sync::FollowerSynchronizer, replica_sync::ReplicaSynchronizer};
@@ -126,6 +124,10 @@ impl<O> LeaderCollects<O> {
 
     pub fn message(&self) -> &FwdConsensusMessage<O> {
         &self.proposed
+    }
+
+    pub fn collects(&self) -> &Vec<StoredMessage<ViewChangeMessage<O>>> {
+        &self.collects
     }
 
     /// Gives up ownership of the inner values of this `LeaderCollects`.
@@ -690,7 +692,7 @@ impl<D> Synchronizer<D> where D: ApplicationData + 'static,
         node: &Arc<NT>,
     ) -> SynchronizerStatus<D::Request>
         where NT: OrderProtocolSendNode<D, PBFT<D>> + 'static,
-              PL: OrderingProtocolLog<PBFTConsensus<D>>
+              PL: OrderingProtocolLog<D, PBFTConsensus<D>>
     {
         debug!("{:?} // Processing view change message {:?} in phase {:?} from {:?}",
                node.id(),
@@ -1330,7 +1332,7 @@ impl<D> Synchronizer<D> where D: ApplicationData + 'static,
         node: &Arc<NT>,
     ) -> Option<SynchronizerStatus<D::Request>>
         where NT: OrderProtocolSendNode<D, PBFT<D>> + 'static,
-              PL: OrderingProtocolLog<PBFTConsensus<D>>
+              PL: OrderingProtocolLog<D, PBFTConsensus<D>>
     {
 
         let state = self.finalize_state.borrow_mut().take()?;
@@ -1354,7 +1356,7 @@ impl<D> Synchronizer<D> where D: ApplicationData + 'static,
     /// of the system
     pub fn start_join_quorum<NT, PL>(&self, joining_node: NodeId, node: &NT, timeouts: &Timeouts, log: &Log<D, PL>) -> SyncReconfigurationResult
         where NT: OrderProtocolSendNode<D, PBFT<D>>,
-              PL: OrderingProtocolLog<PBFTConsensus<D>> {
+              PL: OrderingProtocolLog<D, PBFTConsensus<D>> {
         let current_view = self.view();
 
         info!("{:?} // Starting the quorum join procedure for node {:?}", node.id(), joining_node);
@@ -1451,7 +1453,7 @@ impl<D> Synchronizer<D> where D: ApplicationData + 'static,
                                             timeouts: &Timeouts,
                                             _log: &Log<D, PL>, )
         where NT: OrderProtocolSendNode<D, PBFT<D>>,
-              PL: OrderingProtocolLog<PBFTConsensus<D>>
+              PL: OrderingProtocolLog<D, PBFTConsensus<D>>
     {
         debug!("Beginning quorum view change with certificate {} at phase {:?}",  join_cert.is_some(), self.phase.get());
 
@@ -1507,7 +1509,7 @@ impl<D> Synchronizer<D> where D: ApplicationData + 'static,
         timeouts: &Timeouts,
         _log: &Log<D, PL>,
     ) where NT: OrderProtocolSendNode<D, PBFT<D>>,
-            PL: OrderingProtocolLog<PBFTConsensus<D>>
+            PL: OrderingProtocolLog<D, PBFTConsensus<D>>
     {
         match (self.phase.get(), &timed_out) {
             // we have received STOP messages from peer nodes,
@@ -1576,7 +1578,7 @@ impl<D> Synchronizer<D> where D: ApplicationData + 'static,
         _normalized_collects: Vec<Option<&CollectData<D::Request>>>,
         log: &Log<D, PL>,
     ) -> FinalizeStatus<D::Request>
-        where PL: OrderingProtocolLog<PBFTConsensus<D>>
+        where PL: OrderingProtocolLog<D, PBFTConsensus<D>>
     {
         let last_executed_cid = proof.as_ref().map(|p| p.sequence_number()).unwrap_or(SeqNo::ZERO);
 
@@ -1611,7 +1613,7 @@ impl<D> Synchronizer<D> where D: ApplicationData + 'static,
         node: &Arc<NT>,
     ) -> SynchronizerStatus<D::Request>
         where NT: OrderProtocolSendNode<D, PBFT<D>> + 'static,
-              PL: OrderingProtocolLog<PBFTConsensus<D>>
+              PL: OrderingProtocolLog<D, PBFTConsensus<D>>
     {
         let FinalizeState {
             curr_cid,

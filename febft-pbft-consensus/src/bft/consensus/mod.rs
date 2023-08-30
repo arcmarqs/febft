@@ -12,11 +12,10 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo, tbo_advance_message_queue, tbo_advance_message_queue_return, tbo_queue_message};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::protocol_node::ProtocolNetworkNode;
-use atlas_core::messages::{ClientRqInfo, RequestMessage, StoredRequestMessage, SystemMessage};
+use atlas_core::messages::{ClientRqInfo, RequestMessage, StoredRequestMessage};
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::ProtocolConsensusDecision;
 use atlas_core::persistent_log::{OrderingProtocolLog, StatefulOrderingProtocolLog};
-use atlas_core::serialize::{LogTransferMessage, ReconfigurationProtocolMessage, StateTransferMessage};
 use atlas_core::timeouts::Timeouts;
 use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::ApplicationData;
@@ -368,7 +367,7 @@ impl<D, PL> Consensus<D, PL> where D: ApplicationData + 'static,
                                log: &mut Log<D, PL>,
                                node: &Arc<NT>) -> Result<ConsensusStatus>
         where NT: OrderProtocolSendNode<D, PBFT<D>> + 'static,
-              PL: OrderingProtocolLog<PBFTConsensus<D>>, {
+              PL: OrderingProtocolLog<D, PBFTConsensus<D>>, {
         let message_seq = message.sequence_number();
 
         let view_seq = message.view();
@@ -697,7 +696,7 @@ impl<D, PL> Consensus<D, PL> where D: ApplicationData + 'static,
                               view: &ViewInfo,
                               proof: Proof<D::Request>,
                               log: &mut Log<D, PL>) -> Result<ProtocolConsensusDecision<D::Request>>
-        where PL: OrderingProtocolLog<PBFTConsensus<D>> {
+        where PL: OrderingProtocolLog<D, PBFTConsensus<D>> {
 
         // If this is successful, it means that we are all caught up and can now start executing the
         // batch
@@ -803,7 +802,7 @@ impl<D, PL> Consensus<D, PL> where D: ApplicationData + 'static,
         node: &Arc<NT>,
     ) where
         NT: OrderProtocolSendNode<D, PBFT<D>> + 'static,
-        PL: OrderingProtocolLog<PBFTConsensus<D>> {
+        PL: OrderingProtocolLog<D, PBFTConsensus<D>> {
         //Prepare the algorithm as we are already entering this phase
 
         self.install_view(new_view);
