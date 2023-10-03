@@ -2,11 +2,12 @@
 
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
+use std::mem;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::{debug, error, info, warn};
-use metrics::{CHECKPOINT_UPDATE_TIME, CHECKPOINT_UPDATE_TIME_ID};
+use metrics::{CHECKPOINT_UPDATE_TIME, CHECKPOINT_UPDATE_TIME_ID, CHECKPOINT_SIZE_ID};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 
@@ -31,12 +32,12 @@ use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 use atlas_execution::app::Application;
 use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::monolithic_state::{InstallStateMessage, MonolithicState};
-use atlas_metrics::metrics::{metric_duration, metric_duration_end, metric_duration_start};
+use atlas_metrics::metrics::{metric_duration, metric_duration_end, metric_duration_start, metric_store_count, metric_increment};
 
 use crate::config::StateTransferConfig;
 use crate::message::{CstMessage, CstMessageKind};
 use crate::message::serialize::CSTMsg;
-use crate::metrics::{STATE_TRANSFER_STATE_INSTALL_CLONE_TIME_ID, STATE_TRANSFER_TIME_ID, PROCESS_REQ_STATE_TIME_ID};
+use crate::metrics::{STATE_TRANSFER_STATE_INSTALL_CLONE_TIME_ID, STATE_TRANSFER_TIME_ID, PROCESS_REQ_STATE_TIME_ID, TOTAL_STATE_TRANSFERED_ID, TOTAL_STATE_INSTALLED_ID};
 
 pub mod message;
 pub mod config;
@@ -316,6 +317,7 @@ impl<S, NT, PL> StateTransferProtocol<S, NT, PL> for CollabStateTransfer<S, NT, 
             CstStatus::State(state) => {
                 let start = Instant::now();
 
+                metric_store_count(TOTAL_STATE_INSTALLED_ID, mem::size_of_val(&*state));
                 self.install_channel.send(InstallStateMessage::new(state.checkpoint.state().clone())).unwrap();
 
                 println!("state transfer finished {:?}", start.elapsed());
@@ -723,7 +725,6 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
             }
             ProtoPhase::ReceivingState(i) => {
                 let (header, mut message) = getmessage!(progress, CstStatus::RequestState);
-
                 if message.sequence_number() != self.curr_seq {
                     // NOTE: check comment above, on ProtoPhase::ReceivingCid
                     return CstStatus::Running;
@@ -734,6 +735,8 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
                     // drop invalid message kinds
                     None => return CstStatus::Running,
                 };
+
+                metric_increment(TOTAL_STATE_TRANSFERED_ID, Some(std::mem::size_of_val(&*state.checkpoint)));
 
                 let state_digest = state.checkpoint.digest().clone();
 
@@ -849,7 +852,7 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
                 let checkpoint_state = CheckpointState::Complete(checkpoint.clone());
 
                 self.current_checkpoint_state = checkpoint_state;
-
+                metric_store_count(CHECKPOINT_SIZE_ID, mem::size_of_val(&*checkpoint_state));
                 self.persistent_log.write_checkpoint(OperationMode::NonBlockingSync(None), checkpoint)?;
                 metric_duration_end(CHECKPOINT_UPDATE_TIME_ID);
                 Ok(())
@@ -969,8 +972,9 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
         self.timeouts.timeout_cst_request(self.curr_timeout,
                                           view.quorum() as u32,
                                           cst_seq);
-
+        
         self.phase = ProtoPhase::ReceivingState(0);
+        metric_store_count(TOTAL_STATE_TRANSFERED_ID, 0);
 
         //TODO: Maybe attempt to use followers to rebuild state and avoid
         // Overloading the replicas
