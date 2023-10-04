@@ -317,7 +317,7 @@ impl<S, NT, PL> StateTransferProtocol<S, NT, PL> for CollabStateTransfer<S, NT, 
             CstStatus::State(state) => {
                 let start = Instant::now();
 
-                metric_store_count(TOTAL_STATE_INSTALLED_ID, mem::size_of_val(&*state));
+                metric_store_count(TOTAL_STATE_INSTALLED_ID, mem::size_of_val(state.checkpoint.state()));
                 self.install_channel.send(InstallStateMessage::new(state.checkpoint.state().clone())).unwrap();
 
                 println!("state transfer finished {:?}", start.elapsed());
@@ -736,7 +736,7 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
                     None => return CstStatus::Running,
                 };
 
-                metric_increment(TOTAL_STATE_TRANSFERED_ID, Some(std::mem::size_of_val(&*state.checkpoint)));
+                metric_increment(TOTAL_STATE_TRANSFERED_ID, Some(std::mem::size_of_val(state.checkpoint.state())));
 
                 let state_digest = state.checkpoint.digest().clone();
 
