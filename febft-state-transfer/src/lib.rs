@@ -315,17 +315,18 @@ impl<S, NT, PL> StateTransferProtocol<S, NT, PL> for CollabStateTransfer<S, NT, 
         match status {
             CstStatus::Running => (),
             CstStatus::State(state) => {
-                let start = Instant::now();
 
-                metric_store_count(TOTAL_STATE_INSTALLED_ID, state.checkpoint.size());
+                metric_store_count(TOTAL_STATE_INSTALLED_ID, 0);
+
+                metric_increment(TOTAL_STATE_INSTALLED_ID, Some(state.checkpoint.size() as u64));
                 println!("total state installed: {:?}",state.checkpoint.size());
 
+                let start = Instant::now();
                 self.install_channel.send(InstallStateMessage::new(state.checkpoint.state().clone())).unwrap();
                 println!("state transfer finished {:?}", start.elapsed());
 
                 metric_duration(STATE_TRANSFER_STATE_INSTALL_CLONE_TIME_ID, start.elapsed());
                 metric_duration_end(STATE_TRANSFER_TIME_ID);
-
 
                 return Ok(STResult::StateTransferFinished(state.checkpoint.sequence_number()));
             }
@@ -853,7 +854,7 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
             CheckpointState::Partial { seq: _ } | CheckpointState::PartialWithEarlier { seq: _, .. } => {
                 let checkpoint_state = CheckpointState::Complete(checkpoint.clone());
                 metric_store_count(CHECKPOINT_SIZE_ID, checkpoint.size() );
-                println!(" checkpoint size {:?}", checkpoint.size());
+                println!("checkpoint size {:?}", checkpoint.size());
 
                 self.current_checkpoint_state = checkpoint_state;
                 self.persistent_log.write_checkpoint(OperationMode::NonBlockingSync(None), checkpoint)?;
