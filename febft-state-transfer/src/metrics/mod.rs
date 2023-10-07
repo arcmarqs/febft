@@ -34,9 +34,9 @@ pub fn metrics() -> Vec<MetricRegistry> {
         (STATE_TRANSFER_TIME_ID, STATE_TRANSFER_TIME.to_string(), MetricKind::Duration, MetricLevel::Info).into(),
         (CHECKPOINT_UPDATE_TIME_ID, CHECKPOINT_UPDATE_TIME.to_string(), MetricKind::Duration, MetricLevel::Info).into(),
         (PROCESS_REQ_STATE_TIME_ID, PROCESS_REQ_STATE_TIME.to_string(), MetricKind::Duration, MetricLevel::Info).into(),
-        (TOTAL_STATE_TRANSFERED_ID, TOTAL_STATE_TRANSFERED.to_string(), MetricKind::Duration, MetricLevel::Info).into(),
-        (TOTAL_STATE_INSTALLED_ID, TOTAL_STATE_INSTALLED.to_string(), MetricKind::Duration, MetricLevel::Info).into(),
-        (TOTAL_STATE_SIZE_ID, TOTAL_STATE_SIZE.to_string(), MetricKind::Duration, MetricLevel::Info).into(),
-        (CHECKPOINT_SIZE_ID, CHECKPOINT_SIZE.to_string(), MetricKind::Duration, MetricLevel::Info).into(),
+        (TOTAL_STATE_TRANSFERED_ID, TOTAL_STATE_TRANSFERED.to_string(), MetricKind::Counter, MetricLevel::Info).into(),
+        (TOTAL_STATE_INSTALLED_ID, TOTAL_STATE_INSTALLED.to_string(), MetricKind::Counter, MetricLevel::Info).into(),
+        (TOTAL_STATE_SIZE_ID, TOTAL_STATE_SIZE.to_string(), MetricKind::Count, MetricLevel::Info).into(),
+        (CHECKPOINT_SIZE_ID, CHECKPOINT_SIZE.to_string(), MetricKind::Count, MetricLevel::Info).into(),
     ]
 }

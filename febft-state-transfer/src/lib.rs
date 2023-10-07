@@ -317,9 +317,10 @@ impl<S, NT, PL> StateTransferProtocol<S, NT, PL> for CollabStateTransfer<S, NT, 
             CstStatus::State(state) => {
                 let start = Instant::now();
 
-                metric_store_count(TOTAL_STATE_INSTALLED_ID, mem::size_of_val(state.checkpoint.state()));
-                self.install_channel.send(InstallStateMessage::new(state.checkpoint.state().clone())).unwrap();
+                metric_store_count(TOTAL_STATE_INSTALLED_ID, state.checkpoint.size());
+                println!("total state installed: {:?}",state.checkpoint.size());
 
+                self.install_channel.send(InstallStateMessage::new(state.checkpoint.state().clone())).unwrap();
                 println!("state transfer finished {:?}", start.elapsed());
 
                 metric_duration(STATE_TRANSFER_STATE_INSTALL_CLONE_TIME_ID, start.elapsed());
@@ -736,7 +737,8 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
                     None => return CstStatus::Running,
                 };
 
-                metric_increment(TOTAL_STATE_TRANSFERED_ID, Some(std::mem::size_of_val(state.checkpoint.state())));
+                metric_increment(TOTAL_STATE_TRANSFERED_ID, Some(state.checkpoint.size() as u64));
+                println!("total state transfered: {:?}",state.checkpoint.size() as u64);
 
                 let state_digest = state.checkpoint.digest().clone();
 
@@ -850,9 +852,10 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
             }
             CheckpointState::Partial { seq: _ } | CheckpointState::PartialWithEarlier { seq: _, .. } => {
                 let checkpoint_state = CheckpointState::Complete(checkpoint.clone());
+                metric_store_count(CHECKPOINT_SIZE_ID, checkpoint.size() );
+                println!(" checkpoint size {:?}", checkpoint.size());
 
                 self.current_checkpoint_state = checkpoint_state;
-                metric_store_count(CHECKPOINT_SIZE_ID, mem::size_of_val(&*checkpoint_state));
                 self.persistent_log.write_checkpoint(OperationMode::NonBlockingSync(None), checkpoint)?;
                 metric_duration_end(CHECKPOINT_UPDATE_TIME_ID);
                 Ok(())
