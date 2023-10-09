@@ -418,6 +418,7 @@ impl<S, NT, PL> MonolithicStateTransfer<S, NT, PL> for CollabStateTransfer<S, NT
         where V: NetworkView {
             println!("checkpoint");
         self.finalize_checkpoint(state)?;
+        metric_duration_end(CHECKPOINT_UPDATE_TIME_ID);
 
         if self.needs_checkpoint() {
             // This will make the state transfer protocol aware of the latest state
@@ -572,10 +573,9 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
         );
 
         self.node.send(reply, header.from(), true).unwrap();
-
+        metric_duration(PROCESS_REQ_STATE_TIME_ID, start.elapsed());
         println!("process req state finished {:?}", start.elapsed());
 
-        metric_duration(PROCESS_REQ_STATE_TIME_ID, start.elapsed());
     }
 
     /// Advances the state of the CST state machine.
@@ -739,7 +739,7 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
                 };
 
                 metric_increment(TOTAL_STATE_TRANSFERED_ID, Some(state.checkpoint.size() as u64));
-                println!("total state transfered: {:?}",state.checkpoint.size() as u64);
+                //println!("total state transfered: {:?}",state.checkpoint.size() as u64);
 
                 let state_digest = state.checkpoint.digest().clone();
 
@@ -858,7 +858,6 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
 
                 self.current_checkpoint_state = checkpoint_state;
                 self.persistent_log.write_checkpoint(OperationMode::NonBlockingSync(None), checkpoint)?;
-                metric_duration_end(CHECKPOINT_UPDATE_TIME_ID);
                 Ok(())
             }
         }
