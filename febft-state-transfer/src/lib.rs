@@ -316,10 +316,12 @@ impl<S, NT, PL> StateTransferProtocol<S, NT, PL> for CollabStateTransfer<S, NT, 
         match status {
             CstStatus::Running => (),
             CstStatus::State(state) => {
-                let start = Instant::now();
-                metric_duration_start(STATE_TRANSFER_TIME_ID);                
+                metric_store_count(TOTAL_STATE_TRANSFERED_ID, 0);
+                metric_duration_end(TOTAL_STATE_WAIT_ID);
+
                 metric_store_count(TOTAL_STATE_INSTALLED_ID, 0);
                 metric_increment(TOTAL_STATE_INSTALLED_ID, Some(state.checkpoint.state().size().try_into().unwrap()));
+                let start = Instant::now();
 
                 self.install_channel.send_return(InstallStateMessage::new(state.checkpoint.state().clone())).unwrap();
 
@@ -331,6 +333,9 @@ impl<S, NT, PL> StateTransferProtocol<S, NT, PL> for CollabStateTransfer<S, NT, 
             CstStatus::SeqNo(seq) => {
                 if self.current_checkpoint_state.sequence_number() < seq {
                     debug!("{:?} // Requesting state {:?}", self.node.id(), seq);
+                    metric_duration_start(STATE_TRANSFER_TIME_ID);    
+                    metric_duration_start(TOTAL_STATE_WAIT_ID);
+                    metric_store_count(TOTAL_STATE_TRANSFERED_ID, 0);
 
                     self.request_latest_state(view);
                 } else {
@@ -343,9 +348,6 @@ impl<S, NT, PL> StateTransferProtocol<S, NT, PL> for CollabStateTransfer<S, NT, 
                 self.request_latest_consensus_seq_no(view);
             }
             CstStatus::RequestState => {
-                metric_duration_start(TOTAL_STATE_WAIT_ID);
-
-                metric_store_count(TOTAL_STATE_TRANSFERED_ID, 0);
 
                 self.request_latest_state(view);
             }
@@ -816,7 +818,6 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
                         info!("{:?} // Received quorum of states for CST Seq {:?} with digest {:?}, returning the state to the replica",
                             self.node.id(), self.curr_seq, digest);
 
-                        metric_duration_end(TOTAL_STATE_WAIT_ID);
 
                         CstStatus::State(state)
                     }
