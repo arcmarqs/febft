@@ -325,6 +325,7 @@ impl<S, NT, PL> StateTransferProtocol<S, NT, PL> for CollabStateTransfer<S, NT, 
 
                 metric_duration(STATE_TRANSFER_STATE_INSTALL_CLONE_TIME_ID, start.elapsed());
                 metric_duration_end(STATE_TRANSFER_TIME_ID);
+                println!("Finished state transfer {:?}", start.elapsed());
                 return Ok(STResult::StateTransferFinished(state.checkpoint.sequence_number()));
             }
             CstStatus::SeqNo(seq) => {
@@ -421,7 +422,6 @@ impl<S, NT, PL> MonolithicStateTransfer<S, NT, PL> for CollabStateTransfer<S, NT
         if self.needs_checkpoint() {
             self.process_pending_state_requests();
         }
-        metric_duration_end(CHECKPOINT_UPDATE_TIME_ID);
 
         Ok(())
     }
@@ -847,10 +847,12 @@ impl<S, NT, PL> CollabStateTransfer<S, NT, PL>
             }
             CheckpointState::Partial { seq: _ } | CheckpointState::PartialWithEarlier { seq: _, .. } => {
                 let checkpoint_state = CheckpointState::Complete(checkpoint.clone());
+                println!("checkpoint {:?}", checkpoint_state.sequence_number());
 
                 self.current_checkpoint_state = checkpoint_state;
-                println!("checkpoint");
                 self.persistent_log.write_checkpoint(OperationMode::NonBlockingSync(None), checkpoint)?;
+
+                metric_duration_end(CHECKPOINT_UPDATE_TIME_ID);
 
                 Ok(())
             }
