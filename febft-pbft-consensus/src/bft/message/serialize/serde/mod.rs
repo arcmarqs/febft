@@ -20,7 +20,7 @@ pub fn serialize_consensus<W, D>(
 pub fn deserialize_consensus<R, D>(
     r: R
 ) -> Result<ConsensusMessage<D::Request>> where D: ApplicationData, R: Read + AsRef<[u8]> {
-    let msg =  bincode::serde::decode_borrowed_from_slice(r.as_ref(), bincode::config::standard())
+    let (msg,_size) =  bincode::serde::decode_from_slice(r.as_ref(), bincode::config::standard())
         .context("Failed to deserialize message")?;
 
     Ok(msg)
