@@ -88,7 +88,7 @@ dsrust = { version = "0.1.9", git = "https://github.com/nuno1212s/DSRust", optio
 #dsrust = { path = "/home/nunogneto/Documents/Development/Rust/dsrust" }
 crossbeam-channel = { version = "0.5.2", optional = true }
 crossbeam-skiplist = "0.1.1"
-rocksdb = { version = "0.20.1", optional = true }
+rocksdb = { version = "0.24", optional = true, features = ["io_uring","jemalloc","multi-threaded-cf"]}
 
 log = "0.4.17"
 env_logger = "0.10.0"
