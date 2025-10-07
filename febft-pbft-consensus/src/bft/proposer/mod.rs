@@ -73,7 +73,7 @@ impl<D> ProposeBuilder<D> where D: ApplicationData {
 }
 
 ///The size of the batch channel
-const BATCH_CHANNEL_SIZE: usize = 32;
+const BATCH_CHANNEL_SIZE: usize = 128;
 
 impl<D, NT> Proposer<D, NT>
     where D: ApplicationData + 'static, {

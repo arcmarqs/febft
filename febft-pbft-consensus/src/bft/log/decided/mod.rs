@@ -32,7 +32,11 @@ impl<O> DecisionLog<O> {
     }
 
     pub fn append_proof(&mut self, proof: Proof<O>) {
-        self.last_decision = Some(proof)
+        if let Some(old_decision) = self.last_decision.take() {
+            // Explicitly drop large collections
+            drop(old_decision);
+        }
+        self.last_decision = Some(proof);
     }
 
 }
