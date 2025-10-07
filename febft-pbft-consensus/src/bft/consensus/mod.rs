@@ -498,6 +498,9 @@ impl<D> Consensus<D> where D: ApplicationData + 'static {
 
         self.seq_no = self.seq_no.next();
 
+        // Prune any stale signalled sequence numbers that are now in the past
+        self.signalled.prune_before(self.seq_no);
+
         //Get the next message queue from the tbo queue. If there are no messages present
         // (expected during normal operations, then we will create a new message queue)
         let queue = self.tbo_queue.advance_queue();
@@ -583,8 +586,8 @@ impl<D> Consensus<D> where D: ApplicationData + 'static {
                     }
                 }
 
-                /// Get the next few already populated message queues from the tbo queue.
-                /// This will also adjust the tbo queue sequence number to the correct one
+                // Get the next few already populated message queues from the tbo queue.
+                // This will also adjust the tbo queue sequence number to the correct one
                 while self.tbo_queue.sequence_number() < novel_seq_no && self.decisions.len() < self.watermark as usize {
                     let messages = self.tbo_queue.advance_queue();
 
@@ -639,6 +642,9 @@ impl<D> Consensus<D> where D: ApplicationData + 'static {
                 }
 
                 self.seq_no = novel_seq_no;
+
+                // We advanced the base seq_no but preserved some decisions; ensure we drop stale signals
+                self.signalled.prune_before(self.seq_no);
             }
         }
 
@@ -754,7 +760,7 @@ impl<D> Consensus<D> where D: ApplicationData + 'static {
         new_view: &ViewInfo,
         synchronizer: &Synchronizer<D>,
         timeouts: &Timeouts,
-        log: &mut Log<D>,
+    _log: &mut Log<D>,
         node: &Arc<NT>,
     ) -> Result<ConsensusStatus<D::Request>> where
         NT: OrderProtocolSendNode<D, PBFT<D>> + 'static {
@@ -1001,5 +1007,23 @@ impl Signals {
     fn clear(&mut self) {
         self.signaled_nos.clear();
         self.signaled_seq_no.clear();
+    }
+
+    /// Remove any signalled sequence numbers that are strictly before the provided base `min_seq`.
+    fn prune_before(&mut self, min_seq: SeqNo) {
+        // Because we store in a max-heap of Reverse (effectively min-heap),
+        // draining selectively is non-trivial; rebuild from set for simplicity.
+        if self.signaled_nos.is_empty() {
+            return;
+        }
+
+        // Retain only seq_nos >= min_seq
+        self.signaled_nos.retain(|s| *s >= min_seq);
+
+        // Rebuild heap to match the filtered set
+        self.signaled_seq_no.clear();
+        for s in &self.signaled_nos {
+            self.signaled_seq_no.push(Reverse(*s));
+        }
     }
 }
